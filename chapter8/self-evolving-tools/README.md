@@ -48,8 +48,13 @@
 ```bash
 pip install -r requirements.txt
 cp env.example .env        # 填入 OPENAI_API_KEY（默认模型 gpt-4o-mini）
-python demo.py
+python demo.py             # 跑「进化 + 复用」两个任务
+python demo.py --fresh     # 先清空 tool_library/ 再跑，重现「从零进化」（重复演示时推荐）
+python demo.py --help      # 查看全部参数
 ```
+
+> 工具库会**持久化**到 `tool_library/`。若上一轮已封装出 `get_stock_price`，再次直接运行时任务一会在第 0 步
+> 就 `search_tools` 命中并复用它，从而看不到"进化"全过程；想重现进化请加 `--fresh`。
 
 `demo.py` 会连续跑两个任务：
 

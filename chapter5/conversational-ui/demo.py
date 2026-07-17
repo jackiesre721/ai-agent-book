@@ -13,13 +13,18 @@
 注意：真正"浏览器内 HMR 的视觉即时刷新"需手动 `npm run dev` + 打开浏览器查看；
 本 demo 自动验证的是"代码修改被正确应用，且构建始终通过"。
 
-运行:  python demo.py
+运行:
+  python demo.py            # 跑全部 3 轮定制并做完整验证
+  python demo.py --quick    # 只跑第 1 轮（省时，用于快速冒烟）
+  python demo.py --rounds 2 # 只跑前 2 轮
+  python demo.py --no-build # 跳过 vite build（仅验证"改动被正确应用"）
+  python demo.py -h         # 查看全部参数
 """
 
-import os
 import sys
 import shutil
 import difflib
+import argparse
 import subprocess
 from pathlib import Path
 
@@ -127,24 +132,65 @@ def print_diff(rel: str, old: str, new: str):
             break
 
 
-def main():
+def parse_args(argv=None):
+    """解析命令行参数：控制跑几轮、是否跳过构建。"""
+    parser = argparse.ArgumentParser(
+        description="实验 5-11：对话式界面定制系统 —— NL → 代码修改 闭环验证。"
+        "对每条自然语言 UI 定制需求，让 Agent 改写前端源码，"
+        "并断言改动生效、vite build 不被破坏。",
+        formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="快速模式：只跑第 1 轮定制（等价于 --rounds 1）。",
+    )
+    parser.add_argument(
+        "--rounds",
+        type=int,
+        default=None,
+        metavar="N",
+        help=f"只跑前 N 轮定制（1..{len(ROUNDS)}）；默认跑全部。",
+    )
+    parser.add_argument(
+        "--no-build",
+        action="store_true",
+        help="跳过 vite build，仅验证'改动被正确应用'（更快，但不校验构建）。",
+    )
+    return parser.parse_args(argv)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+
+    # 决定本次运行的轮次数：--quick 优先，其次 --rounds，默认全部。
+    limit = len(ROUNDS)
+    if args.quick:
+        limit = 1
+    elif args.rounds is not None:
+        limit = max(1, min(args.rounds, len(ROUNDS)))
+    rounds = ROUNDS[:limit]
+    do_build = not args.no_build
+
     print("=" * 72)
     print("实验 5-11：对话式界面定制系统 —— NL → 代码修改 闭环验证")
     print("=" * 72)
 
     client, model = agent.build_client_and_model()
     print(f"模型: {model}")
+    print(f"本次运行轮次: {limit}/{len(ROUNDS)}    构建验证: {'开启' if do_build else '关闭'}")
 
     restore_baseline()
-    ensure_node_modules()
 
-    print("\n>> 基线构建校验（未定制前，确保应用本身可编译）…")
-    if not run_build():
-        raise SystemExit("基线构建失败，请先修复前端工程。")
-    print("   基线构建：通过 ✅")
+    if do_build:
+        ensure_node_modules()
+        print("\n>> 基线构建校验（未定制前，确保应用本身可编译）…")
+        if not run_build():
+            raise SystemExit("基线构建失败，请先修复前端工程。")
+        print("   基线构建：通过 ✅")
 
     all_pass = True
-    for i, round_def in enumerate(ROUNDS, 1):
+    for i, round_def in enumerate(rounds, 1):
         req = round_def["requirement"]
         print("\n" + "-" * 72)
         print(f"第 {i} 轮 NL 定制需求：{req}")
@@ -173,12 +219,15 @@ def main():
         if not ok:
             all_pass = False
 
-        # 4) 构建验证"没破坏应用"
-        print("构建验证（vite build）：")
-        build_ok = run_build()
-        print(f"   构建结果：{'通过 ✅' if build_ok else '失败 ❌'}")
-        if not build_ok:
-            all_pass = False
+        # 4) 构建验证"没破坏应用"（--no-build 时跳过）
+        if do_build:
+            print("构建验证（vite build）：")
+            build_ok = run_build()
+            print(f"   构建结果：{'通过 ✅' if build_ok else '失败 ❌'}")
+            if not build_ok:
+                all_pass = False
+        else:
+            print("构建验证（vite build）：已跳过（--no-build）")
 
     print("\n" + "=" * 72)
     print(f"多轮定制总结：{'全部通过 ✅' if all_pass else '存在失败项 ❌'}")

@@ -19,6 +19,7 @@ python-pptx 生成真实的 .pptx，并读回校验页数与每页标题。
     python demo.py
 """
 
+import argparse
 import json
 import os
 import sys
@@ -313,7 +314,25 @@ def verify_pptx(path: Path) -> None:
     log("=" * 72)
 
 
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="实验 2-6：用 Agent Skills 的「渐进式披露」从论文生成演示文稿。"
+                    "Agent 启动只看到薄 Skill 目录，按需逐层加载 pptx Skill 的流程与脚本，"
+                    "最后用 python-pptx 生成并校验 output/presentation.pptx。",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--paper", default=str(PAPER_PATH),
+                   help="输入论文/大纲（markdown）路径，默认 papers/sample_paper.md。")
+    return p.parse_args()
+
+
 def main():
+    args = parse_args()
+    global PAPER_PATH
+    PAPER_PATH = Path(args.paper)
+    if not PAPER_PATH.exists():
+        log(f"错误：论文文件不存在：{PAPER_PATH}")
+        sys.exit(1)
     OUTPUT_DIR.mkdir(exist_ok=True)
     pptx_path = run_agent()
     if pptx_path and pptx_path.exists():

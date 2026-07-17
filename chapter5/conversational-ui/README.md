@@ -14,6 +14,26 @@ Agent 自主**定位并修改前端源码**，开发模式下的**热加载（HM
   Agent（OpenAI，默认 `gpt-4o-mini`）读懂需求 → 改 `frontend/src` 里的源码文件；
 - 热加载检测到文件变化，浏览器无需整页刷新即可看到界面变化。
 
+## 原理 / 架构（简述）
+
+整个系统由四部分组成，各司其职：
+
+- **`agent.py`（定制 Agent）**：核心。把一条自然语言需求 + 当前可编辑源码喂给 OpenAI，
+  用 function calling 的 `apply_edits` 工具让模型返回"改写后的文件全文"。
+  只暴露白名单文件（`src/App.jsx`、`src/theme.css`）给模型，并在返回后校验路径，
+  防止模型改错/新增文件。它只产出改写方案，**不落盘**（便于展示 diff 与验证）。
+- **`baseline/src/`（基线快照）**：前端源码的"出厂原样"。`demo.py` 每轮开始前把它
+  拷回 `frontend/src`，保证多次运行结果可重复、互不污染——这也是 Agent 改动与
+  原始界面做 diff 的对照基准。
+- **`frontend/`（React + Vite 前端）**：被定制的对象。Agent 改的就是这里的 `src/*`；
+  开发模式下 Vite **HMR** 让改动即时可见，`vite build` 用于验证"改动没破坏应用"。
+- **`backend/`（FastAPI 后端）**：最小 chatbot 服务（`/api/chat` 回声式回复），
+  为前端提供可对话的载体；`uvicorn --reload` 演示"后端热加载"。它不参与 UI 定制，
+  是让整套界面能真实跑起来的配角。
+
+一句话：**Agent 读需求 → 改前端源码 → 断言改动生效 + 构建不破坏**，
+`baseline` 保证可重复，`backend` 让界面能真实对话。
+
 ## 关于热加载（HMR）
 
 - **前端**：`npm run dev` 启动的 Vite dev server 自带 HMR。Agent 一改 `src/*.jsx`
@@ -61,12 +81,17 @@ cp env.example .env   # 然后填入 OPENAI_API_KEY
 ### 2) 自动验证闭环（无需浏览器）
 
 ```bash
-python demo.py
+python demo.py            # 跑全部 3 轮定制并做完整验证
+python demo.py --quick    # 只跑第 1 轮（省时，用于快速冒烟）
+python demo.py --rounds 2 # 只跑前 2 轮
+python demo.py --no-build # 跳过 vite build（仅验证"改动被正确应用"，更快）
+python demo.py -h         # 查看全部参数
 ```
 
 `demo.py` 会连续跑 3 轮自然语言定制，每轮：
 调用真实 OpenAI 改写源码 → 打印改动 diff → 读回源码断言"改动符合需求" →
-`vite build` 验证"没破坏应用"。
+`vite build` 验证"没破坏应用"。首轮较慢多因 `npm install` 或首次构建，
+想快速验证可用 `--quick` 或 `--no-build`。
 
 ### 3) 手动体验真实 HMR（可选，需要浏览器）
 
@@ -130,3 +155,20 @@ r=agent.customize(c,m,pathlib.Path('frontend'),'把发送按钮改成橙色'); \
 | `OPENAI_API_KEY` | 必填，本实验读取此项 |
 | `OPENAI_BASE_URL` | 可选，切换到兼容 OpenAI 协议的服务端点 |
 | `MODEL` | 可选，默认 `gpt-4o-mini` |
+
+## 如何适配 / 扩展
+
+- **换模型 / 换供应商**：Agent 走标准 OpenAI SDK，任何"兼容 OpenAI 协议"的服务都能接。
+  只需在 `.env` 或环境变量里设置 `OPENAI_BASE_URL` + `MODEL` + 对应的 `OPENAI_API_KEY`，
+  代码无需改动。例如：
+  - Kimi / Moonshot：`OPENAI_BASE_URL=https://api.moonshot.cn/v1`、`MODEL=kimi-k2-...`；
+  - 火山方舟(ARK)：`OPENAI_BASE_URL=https://ark.cn-beijing.volces.com/api/v3`、`MODEL=<endpoint-id>`；
+  - 本地 vLLM / Ollama 等：把 `OPENAI_BASE_URL` 指向本地端点即可。
+- **扩展可定制范围**：默认只允许改 `src/App.jsx`、`src/theme.css`。想让 Agent 能改更多文件，
+  在 `agent.py` 的 `EDITABLE_FILES` 白名单里增删路径即可（白名单越大越灵活，但改错风险也越大）。
+- **新增验证轮次**：在 `demo.py` 的 `ROUNDS` 里追加 `{"requirement": ..., "verify": ...}`，
+  即可把自己的定制需求纳入自动断言闭环。
+- **接前端**：`frontend/` 是标准 Vite 工程，`npm run dev` 起 HMR、`npm run build` 出静态产物。
+  想接自己的界面，替换 `src/*` 并同步更新白名单与 `baseline/` 快照即可。
+- **接后端 / 真实 LLM 对话**：`backend/main.py` 的 `/api/chat` 目前是回声式占位回复，
+  把其中的返回逻辑替换为对模型的调用（同样可复用上面的 `OPENAI_*` 配置），即可变成真实客服。

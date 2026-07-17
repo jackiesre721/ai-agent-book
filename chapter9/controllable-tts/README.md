@@ -85,6 +85,38 @@ python demo.py                            # 生成 output/*.mp3
 
 运行时会打印每个音频的「控制标记 → 参数」解析过程，以及 ffprobe 时长信息。
 
+常用参数（`python demo.py --help`）：
+
+| 参数 | 作用 |
+| --- | --- |
+| `--quick` | 只跑三种配置对比（A/B/C），跳过 5 个风格变体，减少 TTS 调用与耗时 |
+
+## 预期输出示例（真实节选）
+
+```
+首选模型: gpt-4o-mini-tts（不可用时自动兜底 tts-1）
+
+对比实验：同一段带控制标记的文本，三种配置
+原始文本: [EMO:happy][SPEED:fast]太好了！您的订单已确认。[THINKING]嗯，让我查一下发货时间...[EMO:neutral][SPEED:normal]预计明天下午送达。
+
+[C] 多参考语音库（解析控制标记 -> 逐段切换参考语音 + 停顿）
+    -- 控制标记解析过程 --
+  [EMO:happy]            -> 情绪 = happy
+  [SPEED:fast]           -> 语速 = fast
+  [THINKING]             -> 切换到 思考/慢速/正式 参考语音
+  [THINKING] 停顿          -> 插入静音 500ms
+    -- 合成片段 --
+    · [happy_fast_formal         ] gpt-4o-mini-tts  voice=alloy text='太好了！您的订单已确认。'
+    · [静音 500ms]
+    · [thinking_slow_formal      ] gpt-4o-mini-tts  voice=alloy text='嗯，让我查一下发货时间...'
+    · [neutral_normal_formal     ] gpt-4o-mini-tts  voice=alloy text='预计明天下午送达。'
+  => output/C_voice_library.mp3  |  format_name=mp3  duration=11.324000  ...
+```
+
+对照三种配置的 ffprobe 时长即可看出差异：C（多参考语音库）因插入真实静音停顿，
+比 A/B（8.5s 左右）更长（约 11.3s），且各片段用了不同的 `(情绪,语速,风格)` 档案。
+（每次运行会真实调用 OpenAI TTS，时长/字节数会有小幅波动。）
+
 ## 文件说明
 
 | 文件 | 作用 |

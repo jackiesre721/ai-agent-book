@@ -2,11 +2,14 @@
 实验 10-3 一键演示。
 
   python demo.py
+  python demo.py --help          # 查看全部参数
+  python demo.py --model gpt-4o  # 换用更强的模型
+  python demo.py --skip-single   # 只跑管理者模式，跳过单 Agent 对照（更快）
 
 流程：
   1) 读入 sample_book/ 下的 3-4 个英文短章节；
   2) 运行【管理者模式】：Glossary / Translation / Proofreading / Manager 四种 Agent 协作；
-  3) 运行【单 Agent 模式】作为对照；
+  3) 运行【单 Agent 模式】作为对照（除非指定 --skip-single）；
   4) 打印对比表：每个 Agent 的上下文 token 消耗、Manager/主上下文峰值、术语一致性。
 
 结论要点：
@@ -14,20 +17,42 @@
   - 共享术语表让术语在各章保持一致。
 """
 
-import os
+import argparse
 import glob
+import os
 import sys
 
 from dotenv import load_dotenv
-
-import agents
-import consistency
 
 load_dotenv()
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 SAMPLE_DIR = os.path.join(HERE, "sample_book")
 OUT_DIR = os.path.join(HERE, "output")
+
+
+def parse_args():
+    """命令行参数：不带任何参数运行时行为与原版完全一致。"""
+    parser = argparse.ArgumentParser(
+        description=(
+            "实验 10-3：书籍翻译 Agent —— 管理者模式（Glossary/Translation/"
+            "Proofreading/Manager 四种 Agent 协作）vs 单 Agent 模式，"
+            "对比上下文膨胀与术语表遵从率。"
+        )
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        metavar="MODEL",
+        help="覆盖使用的模型（等价于设置 OPENAI_MODEL 环境变量）。"
+             "默认沿用 OPENAI_MODEL 环境变量，缺省为 gpt-4o-mini。",
+    )
+    parser.add_argument(
+        "--skip-single",
+        action="store_true",
+        help="只运行管理者模式，跳过单 Agent 对照组（更快，但不产出核心对比表）。默认关闭。",
+    )
+    return parser.parse_args()
 
 
 def load_chapters():
@@ -75,6 +100,16 @@ def print_consistency(analysis, label):
 
 
 def main():
+    args = parse_args()
+    if args.model:
+        # 必须在 import agents 之前设置：agents.py 在模块加载时读取
+        # OPENAI_MODEL 环境变量来决定使用的模型。
+        os.environ["OPENAI_MODEL"] = args.model
+
+    # 延迟导入，确保上面对 OPENAI_MODEL 的覆盖能在 agents.py 读取环境变量之前生效。
+    import agents
+    import consistency
+
     if not os.environ.get("OPENAI_API_KEY"):
         print("错误：未设置 OPENAI_API_KEY。请先 `export OPENAI_API_KEY=...` "
               "或复制 env.example 为 .env 并填写（见 env.example）。", file=sys.stderr)
@@ -93,6 +128,11 @@ def main():
     print(f"审校报告 summary：{orch['report'].get('summary','')[:120]}")
 
     # ---------------- 单 Agent 模式 ----------------
+    if args.skip_single:
+        hr("已跳过单 Agent 对照组（--skip-single）")
+        print("提示：核心对比表需要单 Agent 数据，去掉 --skip-single 可看到完整对比。")
+        print(f"\n产物目录：{OUT_DIR}")
+        return
     single = agents.run_single_agent(chapters, os.path.join(OUT_DIR, "single_agent"))
     print_agent_table(single["tracker"], "【单 Agent 模式】主上下文 token 消耗")
 

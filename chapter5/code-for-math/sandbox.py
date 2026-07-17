@@ -46,7 +46,7 @@ def run_python(code: str, timeout: int = 20) -> str:
             capture_output=True,
             text=True,
             timeout=timeout,
-            # 空环境 + 最小 PATH，降低误操作风险（仍能访问已安装的库）。
+            # 在临时目录里执行，避免误读写项目文件（仍能访问已安装的库）。
             cwd=tempfile.gettempdir(),
         )
         out = proc.stdout

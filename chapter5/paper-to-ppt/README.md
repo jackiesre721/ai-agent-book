@@ -62,6 +62,21 @@ cp env.example .env    # 填入 OPENAI_API_KEY
 python demo.py
 ```
 
+### 常用参数（`python demo.py --help`）
+
+一次完整运行会做数十次 gpt-4o Vision 调用，较慢较贵。下列参数提供更快的路径：
+
+| 参数 | 作用 |
+|---|---|
+| `--smoke` | **只**验证 Slidev 渲染链路（渲染一个两页 deck），**不调用任何 LLM、无需 API Key**。最快的“没搞坏渲染”自检。 |
+| `--mode {both,dual,single}` | 只跑一种方案（`dual`=提议者-审核者，`single`=单 Agent 自审），省一半时间/费用；`both`（默认）才做跨方案对比。 |
+| `--max-rounds N` | 每种方案的最大迭代轮数（默认 3）。`--max-rounds 1` 只出首版、不修订，是最快的**真实 LLM** 冒烟。 |
+
+```bash
+python demo.py --smoke                 # 不花钱，验证 Node/Slidev/chromium 可用
+python demo.py --mode dual --max-rounds 1   # 一次真实 LLM 冒烟
+```
+
 ## 文件说明
 
 | 文件 | 作用 |
@@ -74,6 +89,49 @@ python demo.py
 | `package.json` | Slidev 与渲染依赖 |
 | `output/` | 运行产物：各轮 `slides.md`、`review.json`、`comparison_summary.json` |
 | `slidev_workspace/exports/` | 各轮渲染出的 PNG（`dual_round1/`、`single_round1/` …） |
+
+## 预期输出示例
+
+一次完整运行后，`output/` 与 `slidev_workspace/exports/` 下的真实产物（节选）：
+
+```
+output/
+├── dual_round1_slides.md      # 双 Agent 第 1 版 slidev 源码（首版故意很挤）
+├── dual_round1_review.json    # Reviewer 对第 1 版的结构化建议 JSON
+├── dual_round2_slides.md      # 据反馈修订后的第 2 版
+├── dual_round2_review.json
+├── dual_round3_slides.md
+├── single_round1_slides.md    # 单 Agent 自审各版
+├── single_round2_slides.md
+├── single_round3_slides.md
+└── comparison_summary.json    # 两方案质量分 + token 消耗汇总
+
+slidev_workspace/exports/
+├── dual_round1/1.png … 5.png      # 首版渲染：段落太长、图表底部超出页面
+├── dual_round2/1.png … 8.png      # 修订版：拆页后每页 8 张更干净
+└── single_round1/1.png …          # 单 Agent 各版渲染
+```
+
+> 说明：Slidev 的 PNG 导出是**逐页一张 PNG**（`1.png`、`2.png`…），本实验不产出单一 PDF；
+> 如需 PDF，可把 `renderer.py` 里的 `--format png` 改为 `--format pdf`。
+> `comparison_summary.json` 里记录两方案的 `iteration_scores`、`final_quality` 与
+> `peak_context_prompt_tokens`（上下文峰值），即书中的核心对比数据。
+
+## 如何适配 / 扩展
+
+- **换模型 / 换供应商**：全部通过环境变量（见 `env.example`），代码无需改动。
+  - `OPENAI_API_KEY`：密钥（必填）。
+  - `OPENAI_BASE_URL`：指向任何兼容 OpenAI 协议的端点（自建网关 / 其它供应商）。
+  - `TEXT_MODEL`：Proposer / 单 Agent 文本部分用的模型（默认 `gpt-4o`）。
+  - `VISION_MODEL`：Reviewer / 独立评委看图用的模型，**必须支持图像输入**（默认 `gpt-4o`）。
+- **换输入论文**：替换 `paper/sample_paper.md`（保留 Markdown 章节结构即可）。若新论文有自己的
+  数据图表，改 `make_figures.py` 里的画图函数并更新 `generate_all()` 返回的 `{文件名: 描述}`，
+  Proposer 会据描述引用这些图。
+- **Slidev 渲染依赖（重要）**：渲染链路依赖 **Node** + 本目录内 `node_modules/`，其中包含
+  `@slidev/cli`、`playwright-chromium`（`slidev export --format png` 的底层浏览器）、`typescript`
+  （twoslash 代码高亮所需）。若 `node_modules/` 缺失或损坏，在本目录执行 `npm install` 重装；
+  若浏览器二进制没装好，补跑 `npx playwright install chromium`。装好后先 `python demo.py --smoke`
+  验证渲染链路，再跑完整流程。
 
 ## 关于"第一版故意写得很挤"
 

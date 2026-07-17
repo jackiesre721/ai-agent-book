@@ -44,10 +44,14 @@ cd chapter9/streaming-speech
 pip install -r requirements.txt          # 另需本机 ffmpeg：brew install ffmpeg
 cp env.example .env                       # 填入 OPENAI_API_KEY（或直接 export）
 python demo.py
+python demo.py --quick                     # 分块粒度放大到 1.5s，Whisper 调用减到约 1/3
+python demo.py --sentence "..." --chunk-step 0.5   # 自定义测试句与分块粒度
+python demo.py --help                      # 查看全部参数
 ```
 
-可在 `demo.py` 顶部调参：`TEST_SENTENCE`（测试句）、`CHUNK_STEP`（分块粒度，默认 0.5s）、
-`TTS_VOICE`、`ASR_LANGUAGE` 等。
+常用参数（`python demo.py --help`）：`--sentence`（测试句）、`--chunk-step`（分块粒度，
+默认 0.5s，越小分块越多越慢）、`--quick`（放大到 1.5s 快速演示）。`TTS_VOICE` /
+`ASR_LANGUAGE` 等仍可在 `demo.py` 顶部常量区调整。
 
 ## 真实运行输出（节选，供参考）
 

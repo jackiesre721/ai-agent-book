@@ -16,8 +16,10 @@
 环境变量：OPENAI_API_KEY（必填），可选 OPENAI_BASE_URL / TEXT_MODEL / TTS_MODEL / TTS_VOICE。
 """
 
+import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import textwrap
@@ -287,9 +289,35 @@ def concat_segments(segments: list) -> Path:
 
 
 # ---------------------------------------------------------------------------
+# 自检（不产生任何 API 调用）：检查外部命令与关键配置是否就绪。
+# ---------------------------------------------------------------------------
+def self_check() -> int:
+    """快速自检 ffmpeg/ffprobe、中文字体与关键环境变量，返回退出码。"""
+    ok = True
+    print("=== 环境自检（不调用任何 API）===")
+
+    for tool in ("ffmpeg", "ffprobe"):
+        found = shutil.which(tool)
+        print(f"  {'[OK]' if found else '[缺失]'} {tool}: {found or '未找到，请安装 ffmpeg'}")
+        ok = ok and bool(found)
+
+    font = next((p for p in FONT_CANDIDATES if os.path.exists(p)), None)
+    print(f"  {'[OK]' if font else '[回退]'} 中文字体: {font or '未找到系统中文字体，将回退默认字体'}")
+
+    key_set = bool(os.getenv("OPENAI_API_KEY"))
+    print(f"  {'[OK]' if key_set else '[缺失]'} OPENAI_API_KEY: {'已设置' if key_set else '未设置'}")
+    print(f"  [配置] TEXT_MODEL={TEXT_MODEL}  TTS_MODEL={TTS_MODEL}  TTS_VOICE={TTS_VOICE}")
+    print(f"  [配置] OPENAI_BASE_URL={os.getenv('OPENAI_BASE_URL') or '（官方默认）'}")
+    print(f"  [配置] 内置幻灯片页数={len(SLIDES)}")
+
+    print("自检" + ("通过。" if ok else "未通过：请先安装缺失的命令行工具。"))
+    return 0 if ok else 1
+
+
+# ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
-def main() -> None:
+def main(limit: int | None = None) -> None:
     if not os.getenv("OPENAI_API_KEY"):
         sys.exit("[错误] 未设置 OPENAI_API_KEY，请复制 env.example 为 .env 并填入。")
 
@@ -302,13 +330,17 @@ def main() -> None:
         timeout=120.0,
         max_retries=3,
     )
-    total = len(SLIDES)
+
+    # --limit / --quick：只处理前 N 页，便于快速冒烟测试（减少 API 调用与耗时）。
+    slides = SLIDES[:limit] if limit else SLIDES
+    total = len(slides)
     segments = []
     manifest = []
 
-    print(f"=== 论文讲解视频自动生成（共 {total} 页）===\n")
+    tag = f"（限 {total}/{len(SLIDES)} 页）" if limit else f"（共 {total} 页）"
+    print(f"=== 论文讲解视频自动生成{tag}===\n")
 
-    for i, slide in enumerate(SLIDES):
+    for i, slide in enumerate(slides):
         print(f"[{i + 1}/{total}] {slide['title']}")
 
         # 1) 渲染幻灯片
@@ -352,5 +384,39 @@ def main() -> None:
     print(f"  ffprobe -v error -show_format -show_streams {FINAL_MP4}")
 
 
+def parse_args() -> argparse.Namespace:
+    """解析命令行参数。"""
+    parser = argparse.ArgumentParser(
+        description="论文讲解视频自动生成：讲解词生成 -> TTS -> ffmpeg 逐页合成。",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例：\n"
+            "  python demo.py            # 生成全部 5 页的完整讲解视频\n"
+            "  python demo.py --quick    # 只跑第 1 页，快速冒烟测试\n"
+            "  python demo.py --limit 2  # 只跑前 2 页\n"
+            "  python demo.py --check    # 仅环境自检，不调用任何 API"
+        ),
+    )
+    parser.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="只处理前 N 页幻灯片（快速测试，显著减少 API 调用与耗时）",
+    )
+    parser.add_argument(
+        "--quick", action="store_true",
+        help="快速测试：等价于 --limit 1",
+    )
+    parser.add_argument(
+        "--check", action="store_true",
+        help="环境自检（检查 ffmpeg/ffprobe/字体/配置）后退出，不产生任何 API 调用",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    main()
+    args = parse_args()
+    if args.check:
+        sys.exit(self_check())
+    limit = 1 if args.quick else args.limit
+    if limit is not None and limit < 1:
+        sys.exit("[错误] --limit 必须为正整数。")
+    main(limit=limit)

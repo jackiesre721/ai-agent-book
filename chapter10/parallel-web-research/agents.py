@@ -24,7 +24,7 @@ from enum import Enum
 from typing import Dict, List, Optional
 
 from llm import judge_answer, llm_available
-from message_bus import BROADCAST, Envelope, MessageBus, _now
+from message_bus import BROADCAST, MessageBus, _now
 from sources import Source
 
 

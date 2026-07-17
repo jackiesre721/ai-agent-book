@@ -287,6 +287,8 @@ class Judge:
     # 结算
     # ------------------------------------------------------------------
     def _check_winner(self) -> Optional[Faction]:
+        """判定当前是否已分出胜负：狼人全灭则好人胜；狼人数≥好人数则狼人胜；
+        否则返回 None（继续游戏）。"""
         w = len(self.wolves(alive_only=True))
         g = len([p for p in self.alive() if p.role != Role.WEREWOLF])
         if w == 0:

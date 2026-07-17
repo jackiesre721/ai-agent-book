@@ -111,8 +111,12 @@ Coding Agent 对 `system_prompt.txt` 的真实改写（diff 节选）会在 `pyt
 【步骤 2】中打印，核心是把第 3、4 条转接规则收紧为"仅乘客明确要求人工 / 紧急安全才转"，
 并新增负面规则"绝不因政策争议或乘客不满而转接，应先解释政策再给替代方案"。
 
-## 6. 说明
+## 6. 如何适配 / 扩展与局限
 
-- 环境为教学用途的精简模拟，工具返回固定 mock 数据；重点在"人类反馈驱动提示词自动优化"
-  这一闭环，而非完整复刻 tau-bench。
-- `LLM_PROVIDER` 可切换 `openai` / `moonshot` / `ark`（均兼容 OpenAI 接口）。
+- **换模型 / 供应商**：`LLM_PROVIDER` 可切换 `openai` / `moonshot` / `ark`（均兼容 OpenAI 接口），
+  `LLM_MODEL` 覆盖模型名，`LLM_TEMPERATURE` 调采样温度（默认 0，见 `config.py` / `env.example`）。
+- **换任务 / 输入**：评测用例集在 `airline_env.py` 的 `CASES`（分 `holdout` / `boundary` 两组）；
+  驱动优化的人类反馈是 `demo.py` 顶部的 `HUMAN_FEEDBACK`；初始与人工对照 prompt 在 `prompts/` 下——
+  改这几处即可把闭环套到你自己的场景。
+- **局限**：环境为教学用途的精简模拟，工具返回固定 mock 数据；重点在"人类反馈驱动提示词自动优化"
+  这一闭环，而非完整复刻 tau-bench。具体正确率会随模型版本与采样有 ±1 个用例的波动。

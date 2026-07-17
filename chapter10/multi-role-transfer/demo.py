@@ -11,6 +11,7 @@ demo.py —— 实验 10-2 演示入口：多角色转换 / transfer_to_agent
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 
@@ -52,14 +53,37 @@ def print_roster():
     print()
 
 
+def parse_args() -> argparse.Namespace:
+    """命令行参数——均为可选，不传时行为与原先完全一致。"""
+    parser = argparse.ArgumentParser(
+        description=(
+            "实验 10-2 演示：多角色转换 / transfer_to_agent —— "
+            "在共享对话历史上触发 triage → research → data_analysis → writing 的自主移交链。"
+        )
+    )
+    parser.add_argument(
+        "--task",
+        default=COMPOSITE_TASK,
+        help="要执行的复合任务文本（默认：新能源汽车销量 CAGR 投资总结任务，即 COMPOSITE_TASK）",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="覆盖 OPENAI_MODEL 环境变量（默认沿用环境变量，未设置则为 gpt-4o-mini）",
+    )
+    return parser.parse_args()
+
+
 def main():
+    args = parse_args()
+
     api_key = os.environ.get("OPENAI_API_KEY")
     if not api_key:
         print("错误：未找到环境变量 OPENAI_API_KEY。请先设置后重试。", file=sys.stderr)
         sys.exit(1)
 
     base_url = os.environ.get("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    model = os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
+    model = args.model or os.environ.get("OPENAI_MODEL", "gpt-4o-mini")
 
     client = OpenAI(api_key=api_key, base_url=base_url)
 
@@ -67,7 +91,7 @@ def main():
     print(f"{C.BOLD}=== 开始执行复合任务（model={model}）==={C.RESET}")
 
     orch = MultiRoleOrchestrator(client=client, model=model, verbose=True)
-    final = orch.run(COMPOSITE_TASK)
+    final = orch.run(args.task)
 
     print(f"\n{C.BOLD}================ 运行汇总 ================{C.RESET}")
     print(f"{C.MAGENTA}自主移交链:{C.RESET} {orch.handoff_chain_str()}")

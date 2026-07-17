@@ -8,14 +8,20 @@ demo.py —— 自适应日志解析系统：自愈闭环演示
   【自动测试】（数据结构断言）→ 通过后【热加载注册 + 持久化】→
   系统【正确解析】了新格式。
 
-运行：python demo.py
+运行：
+  python demo.py            # 完整演示（两种新格式，两次 Agent 调用）
+  python demo.py --quick    # 快速模式：只演示 1 种新格式，省一次 API 调用
+  python demo.py --help     # 查看全部参数
+
+命令行参数见文件底部的 build_arg_parser()。
 """
 
 from __future__ import annotations
 
+import argparse
 import os
 import textwrap
-from typing import Dict, List
+from typing import List
 
 from engine import LogParserEngine, ParseError, builtin_json_parser
 from agent import CodeGenAgent
@@ -148,9 +154,11 @@ def self_heal(
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
-def main() -> None:
+def main(args: argparse.Namespace) -> None:
     hr("自适应日志解析系统 —— 自愈闭环演示（实验 5-7）")
     print("初始系统只内置一个基础解析器：JSON 行解析器。")
+    if args.quick:
+        print("（--quick 快速模式：仅演示 1 种新格式，省一次 Agent/API 调用）")
 
     os.makedirs(PARSERS_DIR, exist_ok=True)  # 确保持久化目录存在（新克隆时可能只有 .gitkeep）
 
@@ -158,7 +166,7 @@ def main() -> None:
     engine.register("builtin_json", builtin_json_parser)
     print(f"当前已注册解析器：{engine.parser_names}")
 
-    agent = CodeGenAgent()
+    agent = CodeGenAgent(model=args.model)  # model=None 时回落到 MODEL 环境变量/默认 gpt-4o-mini
     print(f"代码生成 Agent 使用模型：{agent.model}")
 
     # 步骤 0：基础 JSON 格式，系统本来就能解析
@@ -178,18 +186,22 @@ def main() -> None:
         print("\n(c) 热更新后重新解析同样的日志，预期【成功】：")
         try_parse_all(engine, PIPE_LOGS)
 
-    # 步骤 2：嵌套括号格式（Agent 也没见过）
-    hr("步骤 2：遇到新格式 B —— 嵌套括号格式")
-    print("原始日志样本：")
-    for l in BRACKET_LOGS:
-        print(f"  {l}")
-    print("\n(a) 先让系统解析，预期【失败】：")
-    try_parse_all(engine, BRACKET_LOGS)
-    print("\n触发自愈闭环：")
-    ok2 = self_heal(engine, agent, "bracket_parser", BRACKET_LOGS, BRACKET_REQUIRED)
-    if ok2:
-        print("\n(c) 热更新后重新解析同样的日志，预期【成功】：")
+    # 步骤 2：嵌套括号格式（Agent 也没见过）—— 快速模式下跳过，省一次 API 调用
+    ok2 = None
+    if args.quick:
+        hr("步骤 2：（--quick 模式已跳过新格式 B 的演示）")
+    else:
+        hr("步骤 2：遇到新格式 B —— 嵌套括号格式")
+        print("原始日志样本：")
+        for l in BRACKET_LOGS:
+            print(f"  {l}")
+        print("\n(a) 先让系统解析，预期【失败】：")
         try_parse_all(engine, BRACKET_LOGS)
+        print("\n触发自愈闭环：")
+        ok2 = self_heal(engine, agent, "bracket_parser", BRACKET_LOGS, BRACKET_REQUIRED)
+        if ok2:
+            print("\n(c) 热更新后重新解析同样的日志，预期【成功】：")
+            try_parse_all(engine, BRACKET_LOGS)
 
     # 步骤 3：验证持久化复用 —— 新引擎直接加载 parsers/，无需再问 Agent
     hr("步骤 3：验证持久化复用（重启系统，直接加载已学会的解析器）")
@@ -198,15 +210,40 @@ def main() -> None:
     loaded = engine2.load_persisted(PARSERS_DIR)
     print(f"新引擎从 parsers/ 热加载了：{loaded}")
     print("直接解析之前的新格式（不再调用 Agent）：")
-    mixed = [JSON_LOGS[0], PIPE_LOGS[0], BRACKET_LOGS[0]]
+    mixed = [JSON_LOGS[0], PIPE_LOGS[0]]
+    if not args.quick:
+        mixed.append(BRACKET_LOGS[0])  # 快速模式没生成 bracket_parser，混合样本里也不放它
     all_ok = try_parse_all(engine2, mixed)
 
     hr("演示结束")
     print(f"新格式 A（竖线分隔）自愈结果：{'成功' if ok1 else '失败'}")
-    print(f"新格式 B（嵌套括号）自愈结果：{'成功' if ok2 else '失败'}")
+    if ok2 is None:
+        print("新格式 B（嵌套括号）：--quick 模式已跳过")
+    else:
+        print(f"新格式 B（嵌套括号）自愈结果：{'成功' if ok2 else '失败'}")
     print(f"持久化复用（混合格式全部解析）：{'成功' if all_ok else '失败'}")
     print(f"已学会并持久化的解析器目录：{PARSERS_DIR}")
 
 
+def build_arg_parser() -> argparse.ArgumentParser:
+    """构造命令行参数解析器（提供 --help / --quick / --model）。"""
+    parser = argparse.ArgumentParser(
+        description="自适应日志解析系统：自愈闭环演示（检测失败 → Agent 生成解析代码 → "
+        "自动测试 → 热加载注册 → 持久化复用）。需要有效的 OPENAI_API_KEY。",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--quick",
+        action="store_true",
+        help="快速模式：只演示 1 种新格式（竖线分隔），跳过嵌套括号格式，省一次 Agent/API 调用。",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        help="覆盖代码生成使用的模型；默认读取环境变量 MODEL，再回落到 gpt-4o-mini。",
+    )
+    return parser
+
+
 if __name__ == "__main__":
-    main()
+    main(build_arg_parser().parse_args())

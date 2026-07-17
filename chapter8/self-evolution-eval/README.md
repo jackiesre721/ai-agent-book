@@ -67,7 +67,10 @@ print(report["layers"], report["summary"]["overall"])
 ```bash
 pip install -r requirements.txt
 cp env.example .env      # 填入 OPENAI_API_KEY（默认 provider=openai, 模型 gpt-4o-mini）
-python demo.py
+python demo.py                       # 默认：strong 跑 3 个任务 + weak 对照 1 个
+python demo.py --quick               # 快速演示：strong / weak 各只跑 1 个任务，省时省钱
+python demo.py --tasks task-01,task-07   # 指定要评估的任务 id
+python demo.py --help                # 查看全部参数
 ```
 
 `demo.py` 会：打印数据集概览与几条不暗示工具名的任务示例 → 用 **strong** 参考 Agent 在 3 个任务上跑完
@@ -105,8 +108,18 @@ weak（坏发现：选了废弃库 pytube + 粗糙 stub + 从不复用）：
 两个画像在 L2/L3/L4 上被清晰区分；注意 weak 的 L1 仍可能为 1（碰巧答对），正说明"结果正确"不足以
 评判自我进化能力，必须分层看发现 / 创造 / 复用。
 
-## 配置说明
+## 配置说明 / 如何适配
 
-- 默认 `PROVIDER=openai`，读 `OPENAI_API_KEY`，模型 `gpt-4o-mini`；judge 可换 `gpt-4o` 更严格。
-- 也支持 `PROVIDER=moonshot`（`MOONSHOT_API_KEY`）或 `PROVIDER=ark`（`ARK_API_KEY`），会自动切换 base_url 与默认模型。
+- **换模型**：`AGENT_MODEL`（被测 Agent 造工具）、`JUDGE_MODEL`（第 3 层裁判，可换 `gpt-4o` 更严格）。
+- **换供应商 / 网关**：默认 `PROVIDER=openai`，读 `OPENAI_API_KEY`；也支持 `PROVIDER=moonshot`（`MOONSHOT_API_KEY`）
+  或 `PROVIDER=ark`（`ARK_API_KEY`），会自动切换 base_url 与默认模型（见 `config.py`）。
+- **换任务 / 输入**：编辑 `dataset.json` 新增任务（保持"只说目标、不暗示工具名"原则），或用 `--tasks task-xx,...`
+  指定评估哪几条；把你自己 Agent 的轨迹按 `agent.py` 顶部 schema 喂给 `FourLayerEvaluator.evaluate` 即可评估真实 Agent。
 - **请勿使用** OPENROUTER / ANTHROPIC / DEEPSEEK / SILICONFLOW 的 Key（当前不可用）。
+
+## 局限
+
+- 内置的 `SelfEvolutionAgent` 是**可控参考 Agent**（mock 版），用于把四层 harness 跑通并展示 strong/weak 的区分度，
+  并非真实联网的强 Agent；L1 的"碰巧答对"正是用来说明"结果正确不足以评判自我进化能力"。
+- L3 依赖 LLM-as-a-Judge，分数会随裁判模型与采样有小幅波动；L2/L4 为可解释的启发式，判据写死在 harness 中。
+- 数据集为 20 条教学规模样本，覆盖面广但每领域仅 1 条，重在方法论演示而非统计显著性。

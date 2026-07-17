@@ -62,4 +62,5 @@ ROLE_STRATEGY = {
 
 
 def faction_of(role: Role) -> Faction:
+    """返回某个角色所属的阵营。"""
     return ROLE_FACTION[role]

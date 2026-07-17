@@ -26,6 +26,7 @@ Qwen2-Audio 当前没有可直接调用的 key/endpoint，本 demo 用 OpenAI Wh
 环境变量：OPENAI_API_KEY（见 env.example）。
 """
 
+import argparse
 import os
 import sys
 import time
@@ -134,7 +135,29 @@ def transcribe(client, path: Path) -> str:
 # ----------------------------- 主流程 -----------------------------
 
 
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="实验 9-4：模拟流式语音感知。用 TTS 合成一句中文，再按递增前缀"
+                    "长度切块逐块调 Whisper 识别，复现「早期分块因缺后文而误识别、"
+                    "随音频累积收敛」的延迟 vs 准确率权衡，并与整段识别对照。",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--sentence", default=TEST_SENTENCE,
+                   help="测试句子（默认为书中同类的带时间信息的句子）。")
+    p.add_argument("--chunk-step", type=float, default=CHUNK_STEP,
+                   help=f"分块粒度（秒），越小分块越多、越慢（默认 {CHUNK_STEP}）。")
+    p.add_argument("--quick", action="store_true",
+                   help="快速模式：把分块粒度放大到 1.5s，Whisper 调用数减到约 1/3。")
+    return p.parse_args()
+
+
 def main():
+    # argparse 覆盖模块级默认参数（不改变核心流程，仅调参）
+    args = parse_args()
+    global TEST_SENTENCE, CHUNK_STEP
+    TEST_SENTENCE = args.sentence
+    CHUNK_STEP = 1.5 if args.quick else args.chunk_step
+
     check_prereqs()
     client = get_client()
 

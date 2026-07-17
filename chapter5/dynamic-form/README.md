@@ -30,7 +30,8 @@ Agent，Agent 解析后继续任务。
 ```bash
 pip install -r requirements.txt
 cp env.example .env        # 填入 OPENAI_API_KEY（或直接用环境变量）
-python demo.py
+python demo.py             # 跑完整三步流程（本 demo 为单场景，无需 --limit）
+python demo.py --model gpt-4o   # 可选：覆盖模型；python demo.py --help 查看用法
 ```
 
 跑通后：

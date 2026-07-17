@@ -26,6 +26,7 @@ _client: Optional[OpenAI] = None
 
 
 def get_client() -> OpenAI:
+    """返回全局共享的 OpenAI 客户端（懒加载，进程内单例）。"""
     global _client
     if _client is None:
         _client = OpenAI()  # 自动读取环境变量 OPENAI_API_KEY
@@ -68,6 +69,8 @@ class PlayerAgent:
 
     def _chat(self, instruction: str, players: List[str], max_tokens: int,
               json_mode: bool = False) -> str:
+        """组装 system + user 消息并调用 LLM；user 消息里只拼接本 Agent 自己的
+        私有上下文（`_context_block`），绝不包含其他玩家的私密信息。"""
         messages = [
             {"role": "system", "content": self._system_prompt(players)},
             {"role": "user", "content":

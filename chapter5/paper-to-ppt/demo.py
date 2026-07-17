@@ -9,9 +9,13 @@
   4. 用同一位“独立评委”（Vision）给两种方案的最终 PPT 打分，公平比较**质量**；
   5. 打印两种方案的**上下文 token 消耗**对比（总量、峰值单次 prompt token）。
 
-运行：python demo.py
+运行：python demo.py            # 完整对比（两种方案）
+     python demo.py --help     # 查看全部参数
+     python demo.py --mode dual --max-rounds 1   # 快速：只跑双 Agent、只出首版
+     python demo.py --smoke     # 仅验证 Slidev 渲染链路，不调用任何 LLM
 依赖：Node/Slidev（渲染）、OPENAI_API_KEY（gpt-4o 视觉 + 文本）。
 """
+import argparse
 import json
 import os
 import sys
@@ -58,7 +62,7 @@ def summarize_review(review: dict) -> str:
 # --------------------------------------------------------------------------- #
 # 方案 A：提议者-审核者（双 Agent）
 # --------------------------------------------------------------------------- #
-def run_proposer_reviewer(paper_md, figures):
+def run_proposer_reviewer(paper_md, figures, max_rounds=MAX_ROUNDS):
     banner("方案 A：提议者-审核者（双 Agent 分工）")
     proposer_meter = TokenMeter("Proposer(纯文本)")
     reviewer_meter = TokenMeter("Reviewer(每轮只看最新截图)")
@@ -70,7 +74,7 @@ def run_proposer_reviewer(paper_md, figures):
     slides = proposer.propose()
     final_pngs = None
 
-    for rnd in range(1, MAX_ROUNDS + 1):
+    for rnd in range(1, max_rounds + 1):
         print(f"\n[双 Agent] 第 {rnd} 轮：Proposer 产出 slides.md（{slides.count(chr(10) + '---' + chr(10)) + 1} 段分隔）")
         md_path = save_text(f"dual_round{rnd}_slides.md", slides)
         pngs = render_slides(slides, f"dual_round{rnd}")
@@ -91,7 +95,7 @@ def run_proposer_reviewer(paper_md, figures):
         if review.get("pass") and not blocking:
             print("  ✓ Reviewer 判定达标（无 high/medium 问题），提前结束迭代。")
             break
-        if rnd == MAX_ROUNDS:
+        if rnd == max_rounds:
             break
 
         print("  → Proposer 接收结构化文字反馈并修订（上下文只增文本，不含图片）")
@@ -109,7 +113,7 @@ def run_proposer_reviewer(paper_md, figures):
 # --------------------------------------------------------------------------- #
 # 方案 B：单 Agent 自审
 # --------------------------------------------------------------------------- #
-def run_single_agent(paper_md, figures):
+def run_single_agent(paper_md, figures, max_rounds=MAX_ROUNDS):
     banner("方案 B：单 Agent 自我审查（图片累积在同一上下文）")
     meter = TokenMeter("SingleAgent(自审, 图片累积)")
     agent = SelfReviewAgent(meter, paper_md, figures)
@@ -117,7 +121,7 @@ def run_single_agent(paper_md, figures):
     slides = agent.propose()
     final_pngs = None
 
-    for rnd in range(1, MAX_ROUNDS + 1):
+    for rnd in range(1, max_rounds + 1):
         print(f"\n[单 Agent] 第 {rnd} 轮：生成/修订 slides.md")
         save_text(f"single_round{rnd}_slides.md", slides)
         pngs = render_slides(slides, f"single_round{rnd}")
@@ -125,7 +129,7 @@ def run_single_agent(paper_md, figures):
         print(f"  渲染出 {len(pngs)} 页 PNG")
         print(f"  当前上下文峰值 prompt token = {meter.peak_prompt_tokens}")
 
-        if rnd == MAX_ROUNDS:
+        if rnd == max_rounds:
             break
         print("  → 把 %d 张截图塞回同一上下文，Agent 自审并修订（历史图片不清除）" % len(pngs))
         slides = agent.self_review_and_revise(pngs)
@@ -138,7 +142,80 @@ def _indent(text, n):
     return "\n".join(pad + line for line in text.splitlines())
 
 
-def main():
+def smoke_test():
+    """快速冒烟：只验证 Slidev 渲染链路是否可用，不调用任何 LLM，无需 API Key。"""
+    from renderer import render_slides
+    banner("Smoke test：仅验证 Slidev 渲染链路（不调用 LLM）")
+    demo_md = (
+        "---\ntheme: default\n---\n\n"
+        "# Smoke Test\n\n渲染链路自检\n\n---\n\n"
+        "# 第二页\n\n- Slidev + playwright-chromium 正常\n"
+    )
+    pngs = render_slides(demo_md, "smoke")
+    print(f"✓ 渲染成功，产出 {len(pngs)} 页 PNG：")
+    for p in pngs:
+        print("  ", p)
+    print("Slidev 渲染链路可用。")
+
+
+def parse_args(argv=None):
+    p = argparse.ArgumentParser(
+        prog="demo.py",
+        description="实验 5-4：论文 → PPT 自动生成（提议者-审核者 vs 单 Agent 自审对照）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例：\n"
+            "  python demo.py                          # 完整对比：两种方案 + 独立评委 + token 对比\n"
+            "  python demo.py --mode dual              # 只跑双 Agent（省一半时间/费用）\n"
+            "  python demo.py --max-rounds 1           # 每种方案只出首版（最快的真实 LLM 冒烟）\n"
+            "  python demo.py --smoke                  # 仅验证 Slidev 渲染，不调用任何 LLM\n\n"
+            "模型/供应商通过环境变量配置（见 env.example）：\n"
+            "  OPENAI_API_KEY / OPENAI_BASE_URL / TEXT_MODEL / VISION_MODEL"
+        ),
+    )
+    p.add_argument("--mode", choices=["both", "dual", "single"], default="both",
+                   help="运行哪种方案：both=两种都跑并对比（默认）；dual=仅提议者-审核者；"
+                        "single=仅单 Agent 自审。只跑一种可显著省时省钱。")
+    p.add_argument("--max-rounds", type=int, default=MAX_ROUNDS, metavar="N",
+                   help=f"每种方案的最大迭代轮数（默认 {MAX_ROUNDS}）。设为 1 即只出首版、"
+                        "不修订，是最快的真实运行冒烟。")
+    p.add_argument("--smoke", action="store_true",
+                   help="仅验证 Slidev 渲染链路（渲染一个两页 deck），不调用任何 LLM，无需 API Key。")
+    return p.parse_args(argv)
+
+
+def _save_partial_summary(dual, dual_final, single, single_final):
+    """单方案运行（--mode dual/single）时，落盘该方案自身的质量与 token 结果。"""
+    summary = {"models": {"text": TEXT_MODEL, "vision": VISION_MODEL}}
+    if dual:
+        pm, rm = dual["proposer_meter"], dual["reviewer_meter"]
+        summary["dual_agent"] = {
+            "iteration_scores": [h[0] for h in dual["history"]],
+            "final_quality": dual_final,
+            "total_tokens": pm.total_tokens + rm.total_tokens,
+            "peak_context_prompt_tokens": max(pm.peak_prompt_tokens, rm.peak_prompt_tokens),
+        }
+    if single:
+        sm = single["meter"]
+        summary["single_agent"] = {
+            "final_quality": single_final,
+            "total_tokens": sm.total_tokens,
+            "peak_context_prompt_tokens": sm.peak_prompt_tokens,
+        }
+    p = save_text("comparison_summary.json", json.dumps(summary, ensure_ascii=False, indent=2))
+    print(f"\n结果已保存：{p}")
+    print(f"所有 slides.md / review.json / 渲染 PNG 位于：{OUT_DIR}/ 与 slidev_workspace/exports/")
+
+
+def main(argv=None):
+    args = parse_args(argv)
+
+    if args.smoke:
+        smoke_test()
+        return
+    if args.max_rounds < 1:
+        print("--max-rounds 至少为 1")
+        sys.exit(1)
     if not os.environ.get("OPENAI_API_KEY"):
         print("请先设置 OPENAI_API_KEY（可参考 env.example）")
         sys.exit(1)
@@ -149,22 +226,31 @@ def main():
     figures = generate_all()
     print(f"论文：{PAPER_PATH}（{len(paper_md)} 字符）")
     print(f"文本模型：{TEXT_MODEL}   视觉模型：{VISION_MODEL}")
+    print(f"运行模式：{args.mode}   最大轮数：{args.max_rounds}")
     print("已生成图表：")
     for k, v in figures.items():
         print(f"  {k} -> {v}")
 
-    # 方案 A
-    dual = run_proposer_reviewer(paper_md, figures)
-    # 方案 B
-    single = run_single_agent(paper_md, figures)
+    # 方案 A / 方案 B（--mode 控制跑哪一种；只有 both 才能做跨方案对比）
+    dual = run_proposer_reviewer(paper_md, figures, args.max_rounds) \
+        if args.mode in ("both", "dual") else None
+    single = run_single_agent(paper_md, figures, args.max_rounds) \
+        if args.mode in ("both", "single") else None
 
     # ------- 用同一位独立评委给两种方案的最终 PPT 打分（质量对比，尽量公平） -------
-    banner("独立评委：对两种方案的最终 PPT 分别打分（同一 Vision rubric）")
+    banner("独立评委：对最终 PPT 打分（同一 Vision rubric）")
     judge_meter = TokenMeter("独立评委(不计入两方案成本)")
-    dual_final = independent_judge(dual["final_pngs"], judge_meter)
-    single_final = independent_judge(single["final_pngs"], judge_meter)
-    print(f"方案 A（双 Agent）最终质量：{summarize_review(dual_final)}")
-    print(f"方案 B（单 Agent）最终质量：{summarize_review(single_final)}")
+    dual_final = independent_judge(dual["final_pngs"], judge_meter) if dual else None
+    single_final = independent_judge(single["final_pngs"], judge_meter) if single else None
+    if dual_final:
+        print(f"方案 A（双 Agent）最终质量：{summarize_review(dual_final)}")
+    if single_final:
+        print(f"方案 B（单 Agent）最终质量：{summarize_review(single_final)}")
+
+    if not (dual and single):
+        # 单方案运行：跳过跨方案的 token 对比，仅落盘已有结果
+        _save_partial_summary(dual, dual_final, single, single_final)
+        return
 
     # ------- 迭代改善情况（双 Agent） -------
     banner("迭代质量改善（方案 A：提议者-审核者）")

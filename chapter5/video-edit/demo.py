@@ -13,7 +13,13 @@
   5. Reviewer 检查成片关键帧，给出反馈；不合格则 Proposer 修正边界重剪，迭代。
 
 依赖：ffmpeg/ffprobe（本机剪辑）、OPENAI_API_KEY（gpt-4o 视觉 + 文本）。
+
+常用命令（完整用法见 `python demo.py --help`）：
+  python demo.py                 # 默认需求，完整流程
+  python demo.py --quick         # 快速模式：粗采样 + 单轮审查，省时省钱
+  python demo.py --smoke         # 冒烟自检：仅 ffmpeg，不调用任何 API
 """
+import argparse
 import os
 import shutil
 import sys
@@ -26,7 +32,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(HERE, "output")
 SOURCE_VIDEO = os.path.join(OUT_DIR, "source.mp4")   # 换真实视频：改这里（见 README）
 FINAL_VIDEO = os.path.join(OUT_DIR, "final.mp4")
-MAX_ROUNDS = 3  # Reviewer 反馈后最多重剪次数
+MAX_ROUNDS = 3  # Reviewer 反馈后最多重剪次数（默认，可用 --max-rounds 覆盖）
 
 DEFAULT_REQUEST = "把冲浪的部分剪出来"
 
@@ -35,6 +41,61 @@ def banner(title):
     print("\n" + "=" * 74)
     print(f"  {title}")
     print("=" * 74)
+
+
+def build_arg_parser() -> argparse.ArgumentParser:
+    """命令行参数：位置参数为中文剪辑需求，另有快速/冒烟等开关。"""
+    p = argparse.ArgumentParser(
+        prog="demo.py",
+        description="实验 5-6：基于 API 的智能视频剪辑（两步 Vision 定位 + 提议者-审核者）",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例：\n"
+            "  python demo.py\n"
+            "  python demo.py \"把滑雪部分剪出来，并加上字幕 Winter\"\n"
+            "  python demo.py --quick    # 更少 Vision 调用，快速验证链路\n"
+            "  python demo.py --smoke    # 只跑 ffmpeg 抽帧/剪辑，不调用任何 API\n"
+        ),
+    )
+    p.add_argument("request", nargs="?", default=DEFAULT_REQUEST,
+                   help="中文剪辑需求（默认：%(default)s）")
+    p.add_argument("--quick", action="store_true",
+                   help="快速模式：粗采样（15s/2s）+ 单轮审查，减少 Vision API 调用")
+    p.add_argument("--max-rounds", type=int, default=MAX_ROUNDS, metavar="N",
+                   help="Reviewer 反馈后最多重剪轮数（默认 %(default)s；--quick 时强制为 1）")
+    p.add_argument("--smoke", action="store_true",
+                   help="冒烟自检：仅用 ffmpeg 生成测试视频并抽帧/剪辑，不调用任何 API")
+    return p
+
+
+def smoke_check():
+    """冒烟自检：不触碰 OpenAI，仅验证 ffmpeg 抽帧/剪辑链路是否可用。"""
+    from ffmpeg_utils import ensure_ffmpeg, extract_frame, format_probe
+    from make_test_video import GROUND_TRUTH, make as make_test_video
+    from video_editor import apply_edit
+
+    banner("冒烟自检 | 仅 ffmpeg，不调用任何 API")
+    try:
+        ensure_ffmpeg()
+    except RuntimeError as e:
+        print(f"\n[错误] {e}")
+        sys.exit(1)
+    if os.path.isdir(OUT_DIR):
+        shutil.rmtree(OUT_DIR)
+    os.makedirs(OUT_DIR, exist_ok=True)
+
+    make_test_video(SOURCE_VIDEO)
+    print(f"[1/3] 生成测试视频 OK：{SOURCE_VIDEO}（场景真值={GROUND_TRUTH}）")
+    frame_dir = os.path.join(OUT_DIR, "frames")
+    os.makedirs(frame_dir, exist_ok=True)   # extract_frame 要求目录已存在
+    frame = extract_frame(SOURCE_VIDEO, 20.0, os.path.join(frame_dir, "smoke.png"))
+    print(f"[2/3] 抽帧 OK：{frame}")
+    clip = os.path.join(OUT_DIR, "smoke_cut.mp4")
+    apply_edit(SOURCE_VIDEO, {"start": 15.0, "end": 20.0,
+                              "effects": [{"type": "subtitle", "text": "SMOKE"}]},
+               clip)
+    print(f"[3/3] 剪辑+字幕 OK：\n{format_probe(clip)}")
+    print("\n✓ 冒烟自检通过：ffmpeg 抽帧/剪辑链路正常（未调用 OpenAI）。")
 
 
 def preflight():
@@ -54,7 +115,16 @@ def preflight():
 
 
 def main():
-    nl_request = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_REQUEST
+    args = build_arg_parser().parse_args()
+    if args.smoke:                       # 仅 ffmpeg，不需要 API Key，提前返回。
+        smoke_check()
+        return
+
+    nl_request = args.request
+    # --quick：粗化采样步长并只审查一轮，把 Vision 调用降到最少（用于快速验证链路）。
+    coarse_interval = 15.0 if args.quick else 10.0
+    fine_interval = 2.0 if args.quick else 1.0
+    max_rounds = 1 if args.quick else max(1, args.max_rounds)
     preflight()
 
     # 延迟导入：确保 preflight 的报错优先于任何 SDK 初始化。
@@ -90,17 +160,18 @@ def main():
     effects = intent.get("effects", [])
     print(f"解析结果：目标场景='{target_query}'  特效={effects}")
 
-    banner("步骤 2 | 视频分析子 Agent：两步 Vision 定位")
+    banner("步骤 2 | 视频分析子 Agent：两步 Vision 定位"
+           + ("（--quick 快速采样）" if args.quick else ""))
     start, end, trace = analyzer.locate(
         SOURCE_VIDEO, target_query,
-        coarse_interval=10.0, fine_interval=1.0,
+        coarse_interval=coarse_interval, fine_interval=fine_interval,
         frame_dir=os.path.join(OUT_DIR, "frames"),
     )
     c = trace["coarse"]
-    print(f"  [粗粒度] 每 10s 采样 {len(c['timestamps'])} 帧 → Vision 得区间 "
+    print(f"  [粗粒度] 每 {coarse_interval:.0f}s 采样 {len(c['timestamps'])} 帧 → Vision 得区间 "
           f"[{c['start']:.0f}, {c['end']:.0f}]s（依据：{c['reason']}）")
     f = trace["fine"]
-    print(f"  [细粒度] 窗口 {f['window']} 内每 1s 采样 {f['timestamps_count']} 帧 → "
+    print(f"  [细粒度] 窗口 {f['window']} 内每 {fine_interval:.0f}s 采样 {f['timestamps_count']} 帧 → "
           f"精确边界 [{f['start']:.1f}, {f['end']:.1f}]s（依据：{f['reason']}）")
     print(f"  >>> 最终定位：起 {start:.1f}s  止 {end:.1f}s")
 
@@ -114,7 +185,7 @@ def main():
     banner("步骤 3-4 | Proposer 剪辑 + Reviewer 审查（迭代）")
     plan = {"start": start, "end": end, "effects": effects}
     final_path = None
-    for rnd in range(1, MAX_ROUNDS + 1):
+    for rnd in range(1, max_rounds + 1):
         print(f"\n--- 第 {rnd} 轮 ---")
         clip = os.path.join(OUT_DIR, f"cut_round{rnd}.mp4")
         apply_edit(SOURCE_VIDEO, plan, clip)
@@ -132,7 +203,7 @@ def main():
             final_path = clip
             print("  ✓ 审核通过。")
             break
-        if rnd == MAX_ROUNDS:
+        if rnd == max_rounds:
             final_path = clip
             print("  达到最大轮数，采用当前成片。")
             break

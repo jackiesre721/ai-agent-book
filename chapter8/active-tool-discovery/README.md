@@ -54,7 +54,16 @@ python demo.py --tasks 'opinion(诱导)'       # 含括号的任务 id 记得加
 ```
 
 默认模型 `gpt-4o-mini`（作为"较小/受限"模型），可用 env 覆盖：`MODEL=gpt-3.5-turbo python demo.py`。
-首次运行会为 126 个工具生成嵌入向量并缓存到 `.cache/`，之后复用。
+首次运行会为 126 个工具生成嵌入向量并缓存到 `.cache/`，之后复用。`python demo.py --help` 查看全部参数。
+
+## 如何适配 / 扩展
+
+- **换模型**：`MODEL=gpt-4.1-mini python demo.py`（chat 模型）；`EMBED_MODEL=text-embedding-3-large` 换嵌入模型
+  （换嵌入模型会因签名变化自动重建 `.cache/` 索引）。
+- **换供应商 / 网关**：chat 与 embeddings 都走 OpenAI SDK，`OpenAI()` 会自动读取环境变量 `OPENAI_BASE_URL`，
+  因此指向任意 **OpenAI 兼容**的网关/代理只需 `OPENAI_BASE_URL=https://your-gateway/v1`（该端点需同时提供 chat 与 embeddings）。
+- **换任务 / 输入**：编辑 `tools_library.py` 里的 `TASKS`（每条含 `prompt` 与判分用的能力槽位），或用
+  `--tasks` 只跑其中几条；想扩充工具库同样在 `tools_library.py` 的 `ALL_TOOLS` 中增删。
 
 ## 结论（基于一次真实运行，gpt-4o-mini，2026-07）
 

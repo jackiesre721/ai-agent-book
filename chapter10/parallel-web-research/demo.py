@@ -14,10 +14,17 @@
 
 默认使用离线的关键词判断，保证结果可复现；
 若配置了 OPENAI_API_KEY 且未设 USE_LLM=0，子 Agent 会改用真实 LLM 做判断。
+
+可选命令行参数（均不改变默认行为，见 `python demo.py --help`）：
+  --use-llm   强制启用真实 LLM 判断（等价于设置环境变量 USE_LLM=1，仍需配置
+              OPENAI_API_KEY 才生效；默认离线关键词判断，结果可复现）。
+  --quiet     减少消息总线的逐条 BUS 日志（任务状态表与最终结论仍会打印；
+              默认打印全部 BUS 日志）。
 """
 
 from __future__ import annotations
 
+import argparse
 import asyncio
 import os
 
@@ -32,7 +39,31 @@ from message_bus import MessageBus
 from sources import DEMO_SOURCES, QUESTION
 
 
-async def main():
+def _parse_args() -> argparse.Namespace:
+    """解析命令行参数；不传任何参数时行为与之前完全一致（离线、详细日志）。"""
+    parser = argparse.ArgumentParser(
+        prog="demo.py",
+        description=(
+            "实验 10-6：多个同构子 Agent 并行搜索 + 中心协调的演示。"
+            "展示消息总线发布/订阅、并行派发、实时状态监控、级联终止与竞态处理。"
+            "默认离线关键词判断（结果可复现）；不传参数即为原有默认行为。"
+        ),
+    )
+    parser.add_argument(
+        "--use-llm",
+        action="store_true",
+        help="强制启用真实 LLM 判断（等价于环境变量 USE_LLM=1；仍需配置 "
+        "OPENAI_API_KEY 才会真正生效，否则自动回退离线关键词判断）。默认不启用。",
+    )
+    parser.add_argument(
+        "--quiet",
+        action="store_true",
+        help="减少消息总线的逐条 BUS 日志打印（任务状态表/结论/自检不受影响）。默认打印全部日志。",
+    )
+    return parser.parse_args()
+
+
+async def main(args: argparse.Namespace):
     print("=" * 78)
     print("实验 10-6 · 同时从多个网站搜集信息的 Agent（并行搜索 + 中心协调）")
     print("=" * 78)
@@ -41,7 +72,12 @@ async def main():
     print("说明：geo-journal 与 forum-qa 两个源都含正确答案且延迟接近，用于演示竞态。")
     print("-" * 78)
 
-    bus = MessageBus(verbose=True)
+    if args.use_llm:
+        # 仅设置意图开关；是否真正调用 LLM 仍取决于 llm.llm_available()
+        # （还需配置 OPENAI_API_KEY），未配置时会自动回退离线关键词判断。
+        os.environ["USE_LLM"] = "1"
+
+    bus = MessageBus(verbose=not args.quiet)
     coordinator = Coordinator(bus, QUESTION)
 
     # 并行装配 N 个同构子 Agent，每个绑定一个来源
@@ -72,4 +108,4 @@ async def main():
 
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    asyncio.run(main(_parse_args()))

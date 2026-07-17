@@ -6,8 +6,14 @@
 2) 用 strong 参考 Agent 在 2-3 个任务上跑完四层验证（含真实 LLM-as-a-Judge 打分）。
 3) 用 weak 参考 Agent 做对照，展示四层的区分度。
 4) 复用层对照：strong 第二次相似任务直接检索已注册工具；weak 则重复搜索创建。
+
+用法：
+    python demo.py            # 默认：strong 跑 3 个任务 + weak 对照 1 个任务
+    python demo.py --quick    # 快速演示：strong / weak 各只跑 1 个任务，省时省钱
+    python demo.py --tasks task-01,task-07   # 指定要评估的任务 id（逗号分隔）
 """
 
+import argparse
 import json
 import os
 import sys
@@ -76,7 +82,18 @@ def run_profile(name, profile, tasks, evaluator):
         print()
 
 
+def parse_args():
+    ap = argparse.ArgumentParser(
+        description="实验 8-6：为自我进化 Agent 设计评估数据集 · 四层验证演示")
+    ap.add_argument("--quick", action="store_true",
+                    help="快速演示：strong / weak 各只跑 1 个任务，减少 API 调用与耗时。")
+    ap.add_argument("--tasks", metavar="IDS",
+                    help="逗号分隔的任务 id（如 task-01,task-07），缺省用内置的示例任务。")
+    return ap.parse_args()
+
+
 def main():
+    args = parse_args()
     try:
         Config.get_client()
     except Exception as e:
@@ -90,7 +107,19 @@ def main():
     print_dataset_overview(ds)
 
     by_id = {t["id"]: t for t in ds["tasks"]}
-    tasks = [by_id[i] for i in DEMO_TASK_IDS]
+    # 任务选择：--tasks 指定 > --quick 取 1 个 > 默认 3 个示例任务
+    if args.tasks:
+        want = [i.strip() for i in args.tasks.split(",") if i.strip()]
+        missing = [i for i in want if i not in by_id]
+        if missing:
+            print(f"[错误] 数据集中不存在这些任务 id：{missing}")
+            sys.exit(1)
+        task_ids = want
+    elif args.quick:
+        task_ids = DEMO_TASK_IDS[:1]
+    else:
+        task_ids = DEMO_TASK_IDS
+    tasks = [by_id[i] for i in task_ids]
     evaluator = FourLayerEvaluator(judge_model=Config.JUDGE_MODEL)
 
     # strong：好发现 + LLM 生成的高质量工具 + 复用

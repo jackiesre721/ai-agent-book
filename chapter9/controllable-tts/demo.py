@@ -13,6 +13,7 @@
 输出：output/*.mp3
 """
 
+import argparse
 import os
 import re
 import subprocess
@@ -75,11 +76,27 @@ def render(name: str, segments, print_info=True):
     return out_path
 
 
+def parse_args():
+    p = argparse.ArgumentParser(
+        description="实验 9-5：控制标记驱动的可控 TTS。同一段带控制标记的文本，"
+                    "对比「无标记 / 单一参考语音 / 多参考语音库」三种配置，"
+                    "并合成多个不同风格的变体音频。输出到 output/*.mp3。",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument(
+        "--quick", action="store_true",
+        help="仅跑三种配置对比（A/B/C），跳过 5 个风格变体，减少 TTS 调用与耗时。",
+    )
+    return p.parse_args()
+
+
 def main():
+    args = parse_args()
     if not os.getenv("OPENAI_API_KEY"):
         raise SystemExit("请先设置 OPENAI_API_KEY（见 env.example）")
     os.makedirs(OUT_DIR, exist_ok=True)
-    print(f"首选模型: {PREFERRED_MODEL}（不可用时自动兜底 tts-1）\n")
+    print(f"首选模型: {PREFERRED_MODEL}（不可用时自动兜底 tts-1）"
+          f"{'  [--quick 模式：跳过风格变体]' if args.quick else ''}\n")
 
     # ================= 三种配置对比 =================
     print("=" * 72)
@@ -111,16 +128,17 @@ def main():
     render("C_voice_library", seg_c)
 
     # ================= 同文本 / 不同控制标记 =================
-    print("\n" + "=" * 72)
-    print("同一句文本 + 不同控制标记 -> 不同风格音频")
-    print("=" * 72)
-    for name, text in STYLE_VARIANTS.items():
-        print(f"\n[{name}] {text}")
-        trace = []
-        segs = parse(text, trace=trace)
-        for line in trace:
-            print(line)
-        render(name, segs)
+    if not args.quick:
+        print("\n" + "=" * 72)
+        print("同一句文本 + 不同控制标记 -> 不同风格音频")
+        print("=" * 72)
+        for name, text in STYLE_VARIANTS.items():
+            print(f"\n[{name}] {text}")
+            trace = []
+            segs = parse(text, trace=trace)
+            for line in trace:
+                print(line)
+            render(name, segs)
 
     # ================= 汇总 =================
     print("\n" + "=" * 72)

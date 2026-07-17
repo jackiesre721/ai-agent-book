@@ -18,7 +18,7 @@ def add(pid, names, statements_nl, preds):
     PUZZLES.append(dict(id=pid, names=names, statements=statements_nl, preds=preds))
 
 
-# �J1: 2 人
+# kk01: 2 人
 add("kk01", ["A", "B"],
     {"A": "B 是无赖。", "B": "我们两人都不是骑士。"},
     {"A": lambda t: not t["B"],

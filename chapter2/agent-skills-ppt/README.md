@@ -60,6 +60,8 @@ pip install -r requirements.txt
 cp env.example .env        # 或直接 export
 export OPENAI_API_KEY=sk-...   # 默认模型 gpt-4o-mini，可用 OPENAI_MODEL 覆盖
 python demo.py
+python demo.py --paper papers/your_paper.md   # 换一篇论文/大纲
+python demo.py --help                          # 查看全部参数
 ```
 
 一条命令 `python demo.py` 即可跑通：真实调用 OpenAI，打印渐进式披露的每一步，
@@ -106,4 +108,5 @@ python demo.py
 
 ## 换一篇论文
 
-把 `papers/sample_paper.md` 替换为你自己的论文/大纲（markdown），再跑 `python demo.py` 即可。
+把 `papers/sample_paper.md` 替换为你自己的论文/大纲（markdown），或直接
+`python demo.py --paper 你的论文.md` 指定路径即可。

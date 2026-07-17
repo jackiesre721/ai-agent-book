@@ -1,10 +1,14 @@
+/* ==========================================================================
+   主题样式表（Agent 定制"颜色 / 字体 / 布局"需求时修改这里）
+   为方便自然语言定制，关键视觉变量集中在 :root 里。
+   ========================================================================== */
 :root {
-  --color-primary: #2563eb;        /* 主色（发送按钮、用户气泡）——初始为蓝色 */
+  --color-primary: #16a34a;        /* 主色（发送按钮、用户气泡）——初始为绿色 */
   --color-primary-text: #ffffff;   /* 主色上的文字颜色 */
   --color-bg: #f5f5f5;             /* 页面背景 */
   --color-panel: #ffffff;          /* 面板/卡片背景 */
   --color-text: #1f2937;           /* 正文文字 */
-  --font-family: monospace;        /* 修改为等宽字体 */
+  --font-family: system-ui, "PingFang SC", "Microsoft YaHei", sans-serif;
   --radius: 12px;
 }
 

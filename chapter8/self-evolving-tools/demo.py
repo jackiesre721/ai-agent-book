@@ -8,18 +8,52 @@
      不再重新上网搜索、重新造轮子。程序会打印轨迹并自动校验「复用」是否成立。
 
 注意：真实联网 + 真实调用 OpenAI，请先在环境中配置 OPENAI_API_KEY。
+
+用法：
+    python demo.py           # 跑「进化 + 复用」两个任务
+    python demo.py --fresh   # 先清空 tool_library/ 再跑（重现「从零进化」，重复演示时推荐）
+    python demo.py --help    # 查看全部参数
+
+提示：工具库会持久化到 tool_library/。若上一轮已封装出 get_stock_price，再次直接运行时
+任务一会在第 0 步就命中并复用它，从而看不到「进化」过程；想重现进化请加 --fresh。
 """
 
+import argparse
+import glob
+import os
 import sys
 
 from agent import SelfEvolvingAgent
+from tool_manager import LIBRARY_DIR
 
 
 TASK_1 = "查询 NVIDIA(股票代码 NVDA) 的最新股价，以及与一周前相比的涨跌幅（百分比）。请给出真实数据。"
 TASK_2 = "查询 Apple(股票代码 AAPL) 的最新股价，以及与一周前相比的涨跌幅（百分比）。请给出真实数据。"
 
 
+def _clear_library():
+    """清空持久化的工具库（仅删除生成的 *.json 工件），用于重现「从零进化」。"""
+    removed = 0
+    for p in glob.glob(os.path.join(str(LIBRARY_DIR), "*.json")):
+        try:
+            os.remove(p)
+            removed += 1
+        except OSError:
+            pass
+    print(f"[--fresh] 已清空 tool_library/（删除 {removed} 个已封装工具），将从零开始进化。\n")
+
+
 def main():
+    parser = argparse.ArgumentParser(
+        description="实验 8-5：Agent 从网络寻找工具、自我进化的一键演示。")
+    parser.add_argument(
+        "--fresh", action="store_true",
+        help="运行前清空 tool_library/，以重现任务一的「从零进化」过程（重复演示时推荐）。")
+    args = parser.parse_args()
+
+    if args.fresh:
+        _clear_library()
+
     try:
         agent = SelfEvolvingAgent(verbose=True)
     except RuntimeError as e:

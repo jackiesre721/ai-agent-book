@@ -13,6 +13,7 @@
 
 from __future__ import annotations
 
+import argparse
 import os
 import sys
 
@@ -55,16 +56,32 @@ def _print_record(rec: dict) -> None:
         print(f"      {arrow} [{speaker}] {turn['text']}")
 
 
+_DEFAULT_TASK = (
+    "帮我打电话给宽带客服（客服热线 10010），查询本月账单为什么多扣了 50 元，"
+    "要求对方解释清楚原因，如果是误扣就请他们处理。我的宽带账号是 hz-88231。"
+)
+
+
+def parse_args() -> argparse.Namespace:
+    p = argparse.ArgumentParser(
+        description="实验 9-2：把 PineClaw Voice（make_phone_call）当工具的 ReAct 电话 Agent。"
+                    "给一个自然语言电话任务，Agent 自行决定号码/目标/上下文并（模拟）拨打，"
+                    "读取结构化通话记录后向用户汇报。",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    p.add_argument("--task", default=_DEFAULT_TASK,
+                   help="自定义电话任务（自然语言）。默认用书中的宽带账单示例。")
+    return p.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
     if not os.getenv("OPENAI_API_KEY"):
         print("错误：未检测到 OPENAI_API_KEY。请复制 env.example 为 .env 并填入有效 key。")
         sys.exit(1)
 
     # 书中示例任务：注意这里只给了自然语言任务，Agent 需自行决定通话参数。
-    task = (
-        "帮我打电话给宽带客服（客服热线 10010），查询本月账单为什么多扣了 50 元，"
-        "要求对方解释清楚原因，如果是误扣就请他们处理。我的宽带账号是 hz-88231。"
-    )
+    task = args.task
 
     _hr("用户任务")
     print(task)

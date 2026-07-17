@@ -41,8 +41,12 @@ def _fmt_grade(g):
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--tasks", help="逗号分隔的任务 id，缺省跑全部")
+    ap = argparse.ArgumentParser(
+        description="实验 8-4：主动工具发现 vs 全量注入 的对比演示。"
+                    "对每个任务分别用两种模式运行，打印注入 token / 调用轨迹 / 选择精度对比。",
+        epilog="示例：python demo.py --tasks finance+news,crypto+news")
+    ap.add_argument("--tasks",
+                    help="逗号分隔的任务 id（见 tools_library.py 的 TASKS），缺省跑全部 8 个任务。")
     args = ap.parse_args()
 
     if not os.getenv("OPENAI_API_KEY"):
