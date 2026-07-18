@@ -4,16 +4,20 @@
 实验 5-5：论文讲解视频的自动生成（★★）
 
 流水线（端到端自包含，无需依赖 5-4）：
-  1) 幻灯片：用 PIL 生成若干页带标题/要点的 PNG（模拟“论文 -> PPT”的产物）。
+  1) 幻灯片：用 PIL 生成若干页带标题/要点的 PNG（模拟“论文 -> PPT”的产物），
+            也可用 --slides 传入外部 JSON 替换内置示例。
   2) 讲解词：对每一页调用 gpt-4o-mini 生成【口语化、引导性】的讲解文字
-            （是叙述而非复述要点，负责承上启下）。
-  3) TTS：用 OpenAI tts-1（voice=alloy）把讲解词合成为每页的语音 mp3。
+            （是叙述而非复述要点，负责承上启下）；也可用 --script 直接喂入现成脚本。
+  3) TTS：用 OpenAI tts-1（voice=alloy）把讲解词合成为每页的语音 mp3；
+          或用 --tts-provider offline 让 ffmpeg 生成占位静音音轨（无需任何 API）。
   4) 合成：用 ffmpeg 把「每页 PNG + 该页音频」合成为分段视频（每页时长=该页音频时长），
-          再用 concat 拼接为一个 output/lecture.mp4。
+          再用 concat 拼接为一个 output/lecture.mp4（输出路径可用 --output 指定）。
   5) 校验：用 ffprobe 打印最终 mp4 的时长/分辨率/音视频流信息。
 
 依赖：ffmpeg / ffprobe（命令行）、Python 包见 requirements.txt。
-环境变量：OPENAI_API_KEY（必填），可选 OPENAI_BASE_URL / TEXT_MODEL / TTS_MODEL / TTS_VOICE。
+环境变量：OPENAI_API_KEY（用 openai 供应商时必填），
+          可选 OPENAI_BASE_URL / TEXT_MODEL / TTS_MODEL / TTS_VOICE。
+提示：想在无 API / 无网络时验证整条 ffmpeg 合成流水线，用 `python demo.py --offline`。
 """
 
 import argparse
@@ -23,6 +27,7 @@ import shutil
 import subprocess
 import sys
 import textwrap
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageDraw, ImageFont
@@ -34,8 +39,6 @@ try:
 except Exception:
     pass
 
-from openai import OpenAI
-
 # ---------------------------------------------------------------------------
 # 路径与配置
 # ---------------------------------------------------------------------------
@@ -46,9 +49,13 @@ AUDIO_DIR = OUTPUT_DIR / "audio"
 SEG_DIR = OUTPUT_DIR / "segments"
 FINAL_MP4 = OUTPUT_DIR / "lecture.mp4"
 
-TEXT_MODEL = os.getenv("TEXT_MODEL", "gpt-4o-mini")
-TTS_MODEL = os.getenv("TTS_MODEL", "tts-1")
-TTS_VOICE = os.getenv("TTS_VOICE", "alloy")
+# 默认模型/音色：优先取环境变量，命令行 --text-model 等可再覆盖。
+DEFAULT_TEXT_MODEL = os.getenv("TEXT_MODEL", "gpt-4o-mini")
+DEFAULT_TTS_MODEL = os.getenv("TTS_MODEL", "tts-1")
+DEFAULT_TTS_VOICE = os.getenv("TTS_VOICE", "alloy")
+
+# 离线占位音轨的中文语速估算（字/秒），用于把讲解词长度换算成展示时长。
+OFFLINE_CHARS_PER_SEC = 4.5
 
 # 视频参数
 WIDTH, HEIGHT = 1280, 720
@@ -62,10 +69,26 @@ FONT_CANDIDATES = [
     "/System/Library/Fonts/Supplemental/Arial Unicode.ttf",
 ]
 
+
+@dataclass
+class Config:
+    """一次运行的可调参数（由命令行/环境变量组装）。"""
+
+    provider: str = "openai"          # openai | offline
+    text_model: str = DEFAULT_TEXT_MODEL
+    tts_model: str = DEFAULT_TTS_MODEL
+    tts_voice: str = DEFAULT_TTS_VOICE
+    limit: "int | None" = None
+    output: Path = FINAL_MP4
+    slides: "list[dict] | None" = None   # 幻灯片内容（None=用内置示例）
+    script: "list[str] | None" = None    # 现成讲解词（None=按需生成）
+
+
 # ---------------------------------------------------------------------------
 # 模拟“论文 -> PPT”的产物：每页的标题与要点。
 # 这里用《Attention Is All You Need》（Transformer）作为示例论文。
 # 在真实的 5-4 流程中，这些数据由 Proposer/Reviewer Agent 从论文 PDF 生成。
+# 也可用 --slides your_slides.json 传入同样结构的外部数据替换本示例。
 # ---------------------------------------------------------------------------
 SLIDES = [
     {
@@ -153,6 +176,25 @@ def ffprobe_duration(path: Path) -> float:
     return float(out.strip())
 
 
+def load_slides_file(path: Path) -> list:
+    """从 JSON 文件加载幻灯片内容（[{title, subtitle, bullets}, ...]）。"""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list) or not data:
+        sys.exit(f"[错误] --slides 文件应是非空的 JSON 列表：{path}")
+    for i, s in enumerate(data):
+        if not all(k in s for k in ("title", "subtitle", "bullets")):
+            sys.exit(f"[错误] --slides 第 {i + 1} 项缺少 title/subtitle/bullets 字段。")
+    return data
+
+
+def load_script_file(path: Path) -> list:
+    """从 JSON 文件加载现成讲解词（每页一段的字符串列表）。"""
+    data = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(data, list) or not all(isinstance(x, str) for x in data):
+        sys.exit(f"[错误] --script 文件应是 JSON 字符串列表（每页一段）：{path}")
+    return data
+
+
 # ---------------------------------------------------------------------------
 # 步骤 1：渲染幻灯片 PNG
 # ---------------------------------------------------------------------------
@@ -200,7 +242,12 @@ def render_slide(slide: dict, index: int, total: int) -> Path:
 # ---------------------------------------------------------------------------
 # 步骤 2：为每页生成口语化讲解词
 # ---------------------------------------------------------------------------
-def generate_narration(client: OpenAI, slide: dict, index: int, total: int) -> str:
+def offline_narration(slide: dict) -> str:
+    """离线占位讲解词：不调用 LLM，用副标题+要点拼出一段可读文本（供占位音轨估时）。"""
+    return f"{slide['subtitle']}。" + "；".join(slide["bullets"]) + "。"
+
+
+def generate_narration(client, cfg: Config, slide: dict, index: int, total: int) -> str:
     """调用 gpt-4o-mini，为当前页生成口语化、引导性的讲解文字。"""
     position = (
         "这是开场第一页，请自然地引入主题" if index == 0
@@ -220,7 +267,7 @@ def generate_narration(client: OpenAI, slide: dict, index: int, total: int) -> s
         "4) 只输出讲解词正文，不要任何前后缀、标题或列表符号。"
     )
     resp = client.chat.completions.create(
-        model=TEXT_MODEL,
+        model=cfg.text_model,
         messages=[{"role": "user", "content": prompt}],
         temperature=0.7,
     )
@@ -230,17 +277,45 @@ def generate_narration(client: OpenAI, slide: dict, index: int, total: int) -> s
 # ---------------------------------------------------------------------------
 # 步骤 3：TTS 合成语音
 # ---------------------------------------------------------------------------
-def synthesize_speech(client: OpenAI, text: str, index: int) -> Path:
+def synthesize_openai(client, cfg: Config, text: str, index: int) -> Path:
     """用 OpenAI tts-1 把讲解词合成为 mp3。"""
     path = AUDIO_DIR / f"audio_{index + 1:02d}.mp3"
     # 使用流式写盘接口，避免把整段音频读进内存
     with client.audio.speech.with_streaming_response.create(
-        model=TTS_MODEL,
-        voice=TTS_VOICE,
+        model=cfg.tts_model,
+        voice=cfg.tts_voice,
         input=text,
     ) as response:
         response.stream_to_file(str(path))
     return path
+
+
+def synthesize_offline(text: str, index: int) -> Path:
+    """离线占位 TTS：用 ffmpeg 生成一段“静音” mp3，时长按讲解词字数估算。
+
+    这样无需任何 API/网络即可跑通「渲染 -> 估时 -> ffmpeg 合成」全链路，
+    用于验证 ffmpeg 逐页对齐与拼接是否正确（音轨为静音占位，非真实配音）。
+    """
+    path = AUDIO_DIR / f"audio_{index + 1:02d}.mp3"
+    duration = max(2.0, len(text) / OFFLINE_CHARS_PER_SEC)
+    run(
+        [
+            "ffmpeg", "-y",
+            "-f", "lavfi",
+            "-i", "anullsrc=channel_layout=mono:sample_rate=24000",
+            "-t", f"{duration:.3f}",
+            "-c:a", "libmp3lame", "-q:a", "9",
+            str(path),
+        ]
+    )
+    return path
+
+
+def synthesize_speech(client, cfg: Config, text: str, index: int) -> Path:
+    """按供应商合成一段语音音频。"""
+    if cfg.provider == "offline":
+        return synthesize_offline(text, index)
+    return synthesize_openai(client, cfg, text, index)
 
 
 # ---------------------------------------------------------------------------
@@ -270,28 +345,29 @@ def build_segment(png: Path, mp3: Path, index: int, duration: float) -> Path:
     return out
 
 
-def concat_segments(segments: list) -> Path:
+def concat_segments(segments: list, output: Path) -> Path:
     """用 concat demuxer 把各分段无损拼接为最终 mp4。"""
     list_file = SEG_DIR / "concat.txt"
     list_file.write_text(
         "".join(f"file '{seg.name}'\n" for seg in segments), encoding="utf-8"
     )
+    output.parent.mkdir(parents=True, exist_ok=True)
     run(
         [
             "ffmpeg", "-y",
             "-f", "concat", "-safe", "0",
             "-i", str(list_file),
             "-c", "copy",
-            str(FINAL_MP4),
+            str(output),
         ]
     )
-    return FINAL_MP4
+    return output
 
 
 # ---------------------------------------------------------------------------
 # 自检（不产生任何 API 调用）：检查外部命令与关键配置是否就绪。
 # ---------------------------------------------------------------------------
-def self_check() -> int:
+def self_check(cfg: Config) -> int:
     """快速自检 ffmpeg/ffprobe、中文字体与关键环境变量，返回退出码。"""
     ok = True
     print("=== 环境自检（不调用任何 API）===")
@@ -305,10 +381,14 @@ def self_check() -> int:
     print(f"  {'[OK]' if font else '[回退]'} 中文字体: {font or '未找到系统中文字体，将回退默认字体'}")
 
     key_set = bool(os.getenv("OPENAI_API_KEY"))
-    print(f"  {'[OK]' if key_set else '[缺失]'} OPENAI_API_KEY: {'已设置' if key_set else '未设置'}")
-    print(f"  [配置] TEXT_MODEL={TEXT_MODEL}  TTS_MODEL={TTS_MODEL}  TTS_VOICE={TTS_VOICE}")
+    if cfg.provider == "offline":
+        print("  [OK] 供应商: offline（占位静音音轨，无需 OPENAI_API_KEY）")
+    else:
+        print(f"  {'[OK]' if key_set else '[缺失]'} OPENAI_API_KEY: {'已设置' if key_set else '未设置'}")
+    print(f"  [配置] provider={cfg.provider}  TEXT_MODEL={cfg.text_model}  "
+          f"TTS_MODEL={cfg.tts_model}  TTS_VOICE={cfg.tts_voice}")
     print(f"  [配置] OPENAI_BASE_URL={os.getenv('OPENAI_BASE_URL') or '（官方默认）'}")
-    print(f"  [配置] 内置幻灯片页数={len(SLIDES)}")
+    print(f"  [配置] 幻灯片页数={len(cfg.slides or SLIDES)}  输出={cfg.output}")
 
     print("自检" + ("通过。" if ok else "未通过：请先安装缺失的命令行工具。"))
     return 0 if ok else 1
@@ -317,28 +397,41 @@ def self_check() -> int:
 # ---------------------------------------------------------------------------
 # 主流程
 # ---------------------------------------------------------------------------
-def main(limit: int | None = None) -> None:
-    if not os.getenv("OPENAI_API_KEY"):
-        sys.exit("[错误] 未设置 OPENAI_API_KEY，请复制 env.example 为 .env 并填入。")
+def main(cfg: Config) -> None:
+    online = cfg.provider != "offline"
+    need_llm = cfg.script is None and online  # 未给脚本且非离线时才调用 LLM 生成讲解词
+
+    client = None
+    if online:
+        if not os.getenv("OPENAI_API_KEY"):
+            sys.exit("[错误] 未设置 OPENAI_API_KEY，请复制 env.example 为 .env 并填入；"
+                     "或用 --offline 在无 API 时验证合成流水线。")
+        from openai import OpenAI  # 延迟导入：--offline 时无需安装/联网 openai
+
+        # timeout / max_retries：TTS/文本调用偶发网络抖动时自动重试，不至于整轮崩溃
+        client = OpenAI(
+            base_url=os.getenv("OPENAI_BASE_URL") or None,
+            timeout=120.0,
+            max_retries=3,
+        )
 
     for d in (SLIDES_DIR, AUDIO_DIR, SEG_DIR):
         d.mkdir(parents=True, exist_ok=True)
 
-    # timeout / max_retries：TTS/文本调用偶发网络抖动时自动重试，不至于整轮崩溃
-    client = OpenAI(
-        base_url=os.getenv("OPENAI_BASE_URL") or None,
-        timeout=120.0,
-        max_retries=3,
-    )
-
+    all_slides = cfg.slides or SLIDES
     # --limit / --quick：只处理前 N 页，便于快速冒烟测试（减少 API 调用与耗时）。
-    slides = SLIDES[:limit] if limit else SLIDES
+    slides = all_slides[:cfg.limit] if cfg.limit else all_slides
     total = len(slides)
+
+    if cfg.script is not None and len(cfg.script) < total:
+        sys.exit(f"[错误] --script 提供了 {len(cfg.script)} 段，少于要处理的 {total} 页。")
+
     segments = []
     manifest = []
 
-    tag = f"（限 {total}/{len(SLIDES)} 页）" if limit else f"（共 {total} 页）"
-    print(f"=== 论文讲解视频自动生成{tag}===\n")
+    tag = f"（限 {total}/{len(all_slides)} 页）" if cfg.limit else f"（共 {total} 页）"
+    mode = "离线占位" if not online else f"{cfg.provider}/{cfg.tts_model}"
+    print(f"=== 论文讲解视频自动生成{tag}[{mode}] ===\n")
 
     for i, slide in enumerate(slides):
         print(f"[{i + 1}/{total}] {slide['title']}")
@@ -347,12 +440,17 @@ def main(limit: int | None = None) -> None:
         png = render_slide(slide, i, total)
         print(f"    幻灯片: {png.relative_to(ROOT)}")
 
-        # 2) 生成口语化讲解词
-        narration = generate_narration(client, slide, i, total)
+        # 2) 讲解词：优先用传入脚本，其次 LLM 生成，离线则用占位文本
+        if cfg.script is not None:
+            narration = cfg.script[i].strip()
+        elif need_llm:
+            narration = generate_narration(client, cfg, slide, i, total)
+        else:
+            narration = offline_narration(slide)
         print(f"    讲解词: {narration}")
 
-        # 3) TTS 合成语音
-        mp3 = synthesize_speech(client, narration, i)
+        # 3) TTS 合成语音（openai 真配音 / offline 静音占位）
+        mp3 = synthesize_speech(client, cfg, narration, i)
         dur = ffprobe_duration(mp3)
         print(f"    音频:   {mp3.relative_to(ROOT)}  时长 {dur:.2f}s")
 
@@ -367,10 +465,10 @@ def main(limit: int | None = None) -> None:
 
     # 5) 拼接为最终视频
     print("=== 拼接为最终视频 ===")
-    concat_segments(segments)
+    concat_segments(segments, cfg.output)
 
     audio_total = sum(m["audio_seconds"] for m in manifest)
-    video_total = ffprobe_duration(FINAL_MP4)
+    video_total = ffprobe_duration(cfg.output)
 
     # 保存讲解词清单，便于查看
     (OUTPUT_DIR / "narration.json").write_text(
@@ -379,9 +477,13 @@ def main(limit: int | None = None) -> None:
 
     print(f"各页音频总时长: {audio_total:.2f}s")
     print(f"最终视频时长:   {video_total:.2f}s")
-    print(f"输出文件:       {FINAL_MP4.relative_to(ROOT)}")
+    try:
+        shown = cfg.output.relative_to(ROOT)
+    except ValueError:
+        shown = cfg.output
+    print(f"输出文件:       {shown}")
     print("\n完成。可用以下命令查看视频元信息：")
-    print(f"  ffprobe -v error -show_format -show_streams {FINAL_MP4}")
+    print(f"  ffprobe -v error -show_format -show_streams {cfg.output}")
 
 
 def parse_args() -> argparse.Namespace:
@@ -391,10 +493,14 @@ def parse_args() -> argparse.Namespace:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=(
             "示例：\n"
-            "  python demo.py            # 生成全部 5 页的完整讲解视频\n"
-            "  python demo.py --quick    # 只跑第 1 页，快速冒烟测试\n"
-            "  python demo.py --limit 2  # 只跑前 2 页\n"
-            "  python demo.py --check    # 仅环境自检，不调用任何 API"
+            "  python demo.py                       # 生成全部 5 页的完整讲解视频（需 OPENAI_API_KEY）\n"
+            "  python demo.py --quick               # 只跑第 1 页，快速冒烟测试\n"
+            "  python demo.py --limit 2             # 只跑前 2 页\n"
+            "  python demo.py --offline             # 无需 API：占位静音音轨，验证整条 ffmpeg 流水线\n"
+            "  python demo.py --slides my.json      # 用外部幻灯片内容替换内置示例\n"
+            "  python demo.py --script narr.json    # 用现成讲解词脚本，跳过 LLM 生成\n"
+            "  python demo.py -o out/talk.mp4       # 指定最终视频输出路径\n"
+            "  python demo.py --check               # 仅环境自检，不调用任何 API"
         ),
     )
     parser.add_argument(
@@ -406,17 +512,69 @@ def parse_args() -> argparse.Namespace:
         help="快速测试：等价于 --limit 1",
     )
     parser.add_argument(
+        "--slides", type=Path, default=None, metavar="FILE",
+        help="幻灯片内容 JSON 文件（[{title,subtitle,bullets}, ...]）；默认用内置示例",
+    )
+    parser.add_argument(
+        "--script", type=Path, default=None, metavar="FILE",
+        help="现成讲解词 JSON 文件（字符串列表，每页一段）；提供后跳过 LLM 讲解词生成",
+    )
+    parser.add_argument(
+        "-o", "--output", type=Path, default=FINAL_MP4, metavar="FILE",
+        help=f"最终讲解视频输出路径（默认 {FINAL_MP4.relative_to(ROOT)}）",
+    )
+    parser.add_argument(
+        "--tts-provider", choices=("openai", "offline"), default="openai",
+        help="TTS 供应商：openai=真实配音（需 API）；offline=ffmpeg 生成占位静音音轨（无需 API）",
+    )
+    parser.add_argument(
+        "--offline", action="store_true",
+        help="完全离线：等价于 --tts-provider offline，且用要点占位讲解词（无任何 API 调用）",
+    )
+    parser.add_argument(
+        "--text-model", default=DEFAULT_TEXT_MODEL, metavar="NAME",
+        help=f"讲解词生成模型（默认 {DEFAULT_TEXT_MODEL}，或环境变量 TEXT_MODEL）",
+    )
+    parser.add_argument(
+        "--tts-model", default=DEFAULT_TTS_MODEL, metavar="NAME",
+        help=f"TTS 模型（默认 {DEFAULT_TTS_MODEL}，或环境变量 TTS_MODEL）",
+    )
+    parser.add_argument(
+        "--tts-voice", default=DEFAULT_TTS_VOICE, metavar="NAME",
+        help=f"TTS 音色（默认 {DEFAULT_TTS_VOICE}，可选 nova/shimmer/echo 等）",
+    )
+    parser.add_argument(
         "--check", action="store_true",
         help="环境自检（检查 ffmpeg/ffprobe/字体/配置）后退出，不产生任何 API 调用",
     )
     return parser.parse_args()
 
 
-if __name__ == "__main__":
-    args = parse_args()
-    if args.check:
-        sys.exit(self_check())
+def build_config(args: argparse.Namespace) -> Config:
+    """把命令行参数组装成 Config。"""
     limit = 1 if args.quick else args.limit
     if limit is not None and limit < 1:
         sys.exit("[错误] --limit 必须为正整数。")
-    main(limit=limit)
+
+    provider = "offline" if args.offline else args.tts_provider
+    slides = load_slides_file(args.slides) if args.slides else None
+    script = load_script_file(args.script) if args.script else None
+
+    return Config(
+        provider=provider,
+        text_model=args.text_model,
+        tts_model=args.tts_model,
+        tts_voice=args.tts_voice,
+        limit=limit,
+        output=args.output,
+        slides=slides,
+        script=script,
+    )
+
+
+if __name__ == "__main__":
+    args = parse_args()
+    cfg = build_config(args)
+    if args.check:
+        sys.exit(self_check(cfg))
+    main(cfg)

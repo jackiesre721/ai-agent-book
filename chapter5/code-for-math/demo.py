@@ -5,19 +5,18 @@
   - 【代码辅助】：把问题形式化为 Python（sympy 符号计算、scipy 数值优化、
      numpy 矩阵），在子进程沙箱执行，返回精确结果。
 
-运行:  python demo.py
-环境变量:
-  OPENAI_API_KEY   （必填，也支持 MOONSHOT_API_KEY / ARK_API_KEY）
-  OPENAI_BASE_URL  （可选，切换到兼容 OpenAI 协议的服务）
-  MODEL            （可选，默认 gpt-4o-mini）
+两种模式跑同一个模型、同一组题、temperature=0，最后给出准确率对照表。
+
+运行:  python demo.py                  # 跑完整对照实验（需要 API key）
+       python demo.py --selfcheck      # 离线自检：只跑沙箱执行参考解，无需 API key
+更多用法见  python demo.py --help
 """
 
 import os
 import re
+import sys
 import json
 import argparse
-
-from openai import OpenAI
 
 from sandbox import run_python
 
@@ -25,12 +24,16 @@ from sandbox import run_python
 # 配置：兼容多种可用的 OpenAI 协议 key
 # ---------------------------------------------------------------------------
 
-def build_client_and_model():
+def build_client_and_model(model_override=None):
     """根据环境变量构造 OpenAI 客户端与默认模型名。
 
     优先级：OPENAI_API_KEY > MOONSHOT_API_KEY > ARK_API_KEY。
     这些服务都兼容 OpenAI 的 chat.completions + function calling 接口。
+    命令行 --model 优先级最高，会覆盖环境变量推断出的默认模型。
     """
+    # 延迟导入：离线自检（--selfcheck）不需要 openai，也不需要 API key。
+    from openai import OpenAI
+
     model = os.getenv("MODEL", "gpt-4o-mini")
     base_url = os.getenv("OPENAI_BASE_URL")
 
@@ -46,8 +49,12 @@ def build_client_and_model():
         model = os.getenv("MODEL", "doubao-seed-1-6-250615")
     else:
         raise SystemExit(
-            "未找到 API key，请设置 OPENAI_API_KEY（或 MOONSHOT_API_KEY / ARK_API_KEY）"
+            "未找到 API key，请设置 OPENAI_API_KEY（或 MOONSHOT_API_KEY / ARK_API_KEY）。\n"
+            "若只想验证沙箱与题库而不调用大模型，可运行：python demo.py --selfcheck"
         )
+
+    if model_override:
+        model = model_override
 
     # 加上超时与重试：避免个别 API 调用长时间挂起导致整个评测卡死。
     _kw = {"api_key": api_key, "timeout": 60.0, "max_retries": 3}
@@ -195,23 +202,140 @@ def solve(client, model, question, use_code, max_turns=8, verbose=False):
 
 
 # ---------------------------------------------------------------------------
+# 离线自检：只用沙箱执行题库自带的参考解，不调用任何大模型
+# ---------------------------------------------------------------------------
+
+def run_selfcheck(problems, verbose=False):
+    """确定性地验证「沙箱 + 题库」这条链路，无需 API key。
+
+    对每道题执行其 problems.json 里附带的参考解（Python 代码），
+    在子进程沙箱里运行，抽取整数输出并与真值比对。既演示了
+    「模型写代码 → 沙箱执行 → 按真值判分」的核心机制，也自检了题库真值本身。
+    返回通过的题目数；全部通过时进程退出码为 0，否则为 1。
+    """
+    print("离线自检：在沙箱中执行题库参考解，并按真值判分（无需 API key）\n")
+    print(f"{'题号':<5}{'考点':<26}{'真值':>7}{'沙箱输出':>10}{'':>4}")
+    print("-" * 56)
+    ok_count = 0
+    missing = 0
+    for p in problems:
+        sol = p.get("solution")
+        if not sol:
+            missing += 1
+            print(f"{p['id']:<5}{p['topic']:<26}{p['answer']:>7}{'(无参考解)':>12}")
+            continue
+        out = run_python(sol)
+        pred = extract_answer(out)
+        ok = pred == p["answer"]
+        ok_count += ok
+        if verbose:
+            print("\n--- 参考解 ---\n" + sol)
+            print("--- 沙箱输出 ---\n" + out)
+        print(
+            f"{p['id']:<5}{p['topic']:<26}{p['answer']:>7}{str(pred):>10}"
+            f"{'✓' if ok else '✗':>4}"
+        )
+    n = len(problems)
+    print("-" * 56)
+    print(f"参考解命中真值：{ok_count}/{n}" + (f"（{missing} 题缺参考解）" if missing else ""))
+    if ok_count == n:
+        print("\n全部通过：沙箱可用，题库真值自洽，可放心用于打分。")
+        return 0
+    print("\n存在不一致：请检查上述 ✗ 题目的参考解或真值。")
+    return 1
+
+
+# ---------------------------------------------------------------------------
+# 参数解析
+# ---------------------------------------------------------------------------
+
+def parse_args(argv=None):
+    parser = argparse.ArgumentParser(
+        prog="demo.py",
+        description="实验 5-1：代码沙箱辅助 vs 纯思维链（CoT）在 AIME 风格数学题上的准确率对照。",
+        epilog=(
+            "示例：\n"
+            "  python demo.py                       跑完整对照实验（code 与 cot 两种模式）\n"
+            "  python demo.py --selfcheck           离线自检沙箱与题库真值，无需 API key\n"
+            "  python demo.py --mode code           只跑代码辅助模式\n"
+            "  python demo.py --mode cot --limit 3  只跑纯 CoT 的前 3 题\n"
+            "  python demo.py --model gpt-4o        换用更强的模型\n"
+            "  python demo.py --output result.json  把逐题结果写入 JSON\n"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--mode",
+        choices=["both", "code", "cot"],
+        default="both",
+        help="求解模式：both=两种都跑并对照（默认）；code=仅代码辅助；cot=仅纯思维链。",
+    )
+    parser.add_argument(
+        "--problems",
+        default="problems.json",
+        metavar="路径",
+        help="题库 JSON 路径（默认 problems.json，相对本脚本目录）。",
+    )
+    parser.add_argument(
+        "--model",
+        default=None,
+        metavar="名称",
+        help="覆盖模型名（默认取环境变量 MODEL，再退化到供应商默认，如 gpt-4o-mini）。",
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        default=0,
+        metavar="N",
+        help="只跑前 N 题（省钱调试，0 表示全部）。",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        metavar="路径",
+        help="把逐题结果与汇总写入指定的 JSON 文件。",
+    )
+    parser.add_argument(
+        "--selfcheck",
+        action="store_true",
+        help="离线自检模式：只在沙箱中执行题库参考解并按真值判分，不调用任何大模型（无需 API key）。",
+    )
+    parser.add_argument(
+        "--verbose",
+        action="store_true",
+        help="打印模型（或参考解）生成的代码与沙箱执行结果。",
+    )
+    return parser.parse_args(argv)
+
+
+# ---------------------------------------------------------------------------
 # 主流程：对照实验
 # ---------------------------------------------------------------------------
 
-def main():
-    parser = argparse.ArgumentParser(description="实验 5-1 代码辅助 vs 纯 CoT")
-    parser.add_argument("--verbose", action="store_true", help="打印模型代码与执行结果")
-    parser.add_argument("--limit", type=int, default=0, help="只跑前 N 题（调试用）")
-    args = parser.parse_args()
-
-    client, model = build_client_and_model()
+def load_problems(path):
     here = os.path.dirname(os.path.abspath(__file__))
-    with open(os.path.join(here, "problems.json"), encoding="utf-8") as f:
-        problems = json.load(f)
+    if not os.path.isabs(path):
+        path = os.path.join(here, path)
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def main(argv=None):
+    args = parse_args(argv)
+
+    problems = load_problems(args.problems)
     if args.limit:
         problems = problems[: args.limit]
 
-    print(f"模型: {model}   题目数: {len(problems)}\n")
+    # ---- 离线自检：无需 API key，确定性判分 ----
+    if args.selfcheck:
+        return run_selfcheck(problems, verbose=args.verbose)
+
+    client, model = build_client_and_model(model_override=args.model)
+
+    run_cot = args.mode in ("both", "cot")
+    run_code = args.mode in ("both", "code")
+    print(f"模型: {model}   题目数: {len(problems)}   模式: {args.mode}\n")
 
     rows = []
     cot_correct = code_correct = 0
@@ -219,22 +343,40 @@ def main():
         q, truth = p["question"], p["answer"]
         print(f"[{p['id']:>2}] {p['topic']}  (真值={truth})")
 
-        cot_pred, _, _ = solve(client, model, q, use_code=False, verbose=args.verbose)
-        cot_ok = cot_pred == truth
-        cot_correct += cot_ok
+        cot_pred = code_pred = None
+        cot_ok = code_ok = False
+        n_calls = 0
+        if run_cot:
+            cot_pred, _, _ = solve(client, model, q, use_code=False, verbose=args.verbose)
+            cot_ok = cot_pred == truth
+            cot_correct += cot_ok
+        if run_code:
+            code_pred, codes, _ = solve(client, model, q, use_code=True, verbose=args.verbose)
+            code_ok = code_pred == truth
+            code_correct += code_ok
+            n_calls = len(codes)
 
-        code_pred, codes, _ = solve(
-            client, model, q, use_code=True, verbose=args.verbose
+        parts = []
+        if run_cot:
+            parts.append(f"纯CoT   预测={cot_pred!s:>8}  {'✓' if cot_ok else '✗'}")
+        if run_code:
+            parts.append(
+                f"代码辅助 预测={code_pred!s:>8}  {'✓' if code_ok else '✗'}"
+                f"   (工具调用 {n_calls} 次)"
+            )
+        print("     " + "   |  ".join(parts))
+        rows.append(
+            {
+                "id": p["id"],
+                "topic": p["topic"],
+                "answer": truth,
+                "cot_pred": cot_pred,
+                "cot_ok": bool(cot_ok),
+                "code_pred": code_pred,
+                "code_ok": bool(code_ok),
+                "tool_calls": n_calls,
+            }
         )
-        code_ok = code_pred == truth
-        code_correct += code_ok
-
-        print(
-            f"     纯CoT   预测={cot_pred!s:>8}  {'✓' if cot_ok else '✗'}"
-            f"   |  代码辅助 预测={code_pred!s:>8}  {'✓' if code_ok else '✗'}"
-            f"   (工具调用 {len(codes)} 次)"
-        )
-        rows.append((p["id"], p["topic"], truth, cot_pred, cot_ok, code_pred, code_ok))
 
     # ---- 汇总表 ----
     n = len(problems)
@@ -243,23 +385,44 @@ def main():
     print("=" * 78)
     print(f"{'题号':<5}{'考点':<26}{'真值':>7}{'CoT预测':>10}{'':>4}{'代码预测':>10}{'':>4}")
     print("-" * 78)
-    for pid, topic, truth, cp, co, dp, do in rows:
+    for r in rows:
+        cp = str(r["cot_pred"]) if run_cot else "-"
+        dp = str(r["code_pred"]) if run_code else "-"
+        cm = ("✓" if r["cot_ok"] else "✗") if run_cot else " "
+        dm = ("✓" if r["code_ok"] else "✗") if run_code else " "
         print(
-            f"{pid:<5}{topic:<26}{truth:>7}{str(cp):>10}{'✓' if co else '✗':>4}"
-            f"{str(dp):>10}{'✓' if do else '✗':>4}"
+            f"{r['id']:<5}{r['topic']:<26}{r['answer']:>7}{cp:>10}{cm:>4}{dp:>10}{dm:>4}"
         )
     print("-" * 78)
-    print(
-        f"{'准确率':<5}{'':<26}{'':>7}"
-        f"{cot_correct}/{n} = {cot_correct/n:5.0%}".rjust(14)
-        + f"{code_correct}/{n} = {code_correct/n:5.0%}".rjust(18)
-    )
+    summary_line = f"{'准确率':<5}{'':<26}{'':>7}"
+    if run_cot:
+        summary_line += f"{cot_correct}/{n} = {cot_correct/n:5.0%}".rjust(14)
+    if run_code:
+        summary_line += f"{code_correct}/{n} = {code_correct/n:5.0%}".rjust(18)
+    print(summary_line)
     print("=" * 78)
-    print(
-        f"\n结论：纯 CoT 准确率 {cot_correct/n:.0%}，代码辅助准确率 {code_correct/n:.0%}，"
-        f"提升 {(code_correct-cot_correct)/n:+.0%}。"
-    )
+    if run_cot and run_code:
+        print(
+            f"\n结论：纯 CoT 准确率 {cot_correct/n:.0%}，代码辅助准确率 {code_correct/n:.0%}，"
+            f"提升 {(code_correct-cot_correct)/n:+.0%}。"
+        )
+
+    # ---- 可选：写出 JSON 结果 ----
+    if args.output:
+        summary = {
+            "model": model,
+            "mode": args.mode,
+            "num_problems": n,
+            "cot_correct": cot_correct if run_cot else None,
+            "code_correct": code_correct if run_code else None,
+            "rows": rows,
+        }
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        print(f"\n结果已写入：{args.output}")
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

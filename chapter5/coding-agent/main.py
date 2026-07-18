@@ -111,27 +111,39 @@ class CodingAgentCLI:
         print(self.color("━" * 40, Colors.CYAN))
         print()
     
-    def initialize_agent(self):
-        """Initialize the agent"""
+    def initialize_agent(self, model: str = None, provider: str = None, base_url: str = None):
+        """Initialize the agent.
+
+        Optional overrides (model/provider/base_url) take precedence over the
+        values in the .env file; anything left as None falls back to Config.
+        """
         try:
+            # Apply command-line overrides on top of the .env configuration
+            if provider:
+                Config.PROVIDER = provider.lower()
+            if model:
+                Config.DEFAULT_MODEL = model
+
             Config.validate()
-            
+
             # Get provider and configuration
             provider = Config.get_provider()
             api_key = Config.get_api_key()
-            base_url = Config.get_base_url()
-            
+            # An explicit --base-url wins; otherwise use the provider default
+            base_url = base_url if base_url else Config.get_base_url()
+            model = Config.DEFAULT_MODEL
+
             # Initialize agent
             self.agent = CodingAgent(
                 api_key=api_key,
-                model=Config.DEFAULT_MODEL,
+                model=model,
                 base_url=base_url,
                 provider=provider
             )
-            
+
             print(self.color("✓ Agent initialized successfully", Colors.GREEN))
             print(self.color(f"  Provider: {provider}", Colors.DIM))
-            print(self.color(f"  Model: {Config.DEFAULT_MODEL}", Colors.DIM))
+            print(self.color(f"  Model: {model}", Colors.DIM))
             if base_url:
                 print(self.color(f"  Base URL: {base_url}", Colors.DIM))
             print()
@@ -182,16 +194,16 @@ class CodingAgentCLI:
         
         return False
     
-    def run_agent(self, user_input: str):
+    def run_agent(self, user_input: str, max_iterations: int = 50):
         """Run the agent with user input and display results"""
         print()
         print(self.color("━" * 80, Colors.BRIGHT_BLACK))
-        
+
         iteration_count = 0
         tool_call_count = 0
-        
+
         try:
-            for event in self.agent.run(user_input, max_iterations=50):
+            for event in self.agent.run(user_input, max_iterations=max_iterations):
                 
                 if event["type"] == "iteration_start":
                     iteration_count = event["iteration"]
@@ -297,18 +309,34 @@ class CodingAgentCLI:
             print()
             return "/quit"
     
-    def run(self):
+    def run_once(self, prompt: str, max_iterations: int = 50,
+                 model: str = None, provider: str = None, base_url: str = None) -> int:
+        """Run a single task non-interactively and exit.
+
+        Returns a process exit code (0 = success).
+        """
+        if not sys.stdout.isatty() or os.getenv('NO_COLOR'):
+            self.use_colors = False
+
+        self.initialize_agent(model=model, provider=provider, base_url=base_url)
+
+        print(self.color("You: ", Colors.BOLD + Colors.GREEN) + prompt)
+        self.run_agent(prompt, max_iterations=max_iterations)
+        return 0
+
+    def run(self, max_iterations: int = 50,
+            model: str = None, provider: str = None, base_url: str = None):
         """Main CLI loop"""
         # Check if colors are supported
         if not sys.stdout.isatty() or os.getenv('NO_COLOR'):
             self.use_colors = False
-        
+
         # Print header
         self.print_header()
-        
+
         # Initialize agent
-        self.initialize_agent()
-        
+        self.initialize_agent(model=model, provider=provider, base_url=base_url)
+
         # Main loop
         while self.running:
             try:
@@ -325,7 +353,7 @@ class CodingAgentCLI:
                     continue
                 
                 # Run agent
-                self.run_agent(user_input)
+                self.run_agent(user_input, max_iterations=max_iterations)
                 
             except KeyboardInterrupt:
                 print()
@@ -345,14 +373,120 @@ class CodingAgentCLI:
                 print()
 
 
+def list_tools():
+    """离线打印所有已注册工具及其简介（无需 API Key）。"""
+    import json
+    tools_file = Path(__file__).parent / "tools.json"
+    with open(tools_file, "r", encoding="utf-8") as f:
+        tools = json.load(f)["tools"]
+
+    print(f"共 {len(tools)} 个工具：\n")
+    for tool in tools:
+        name = tool.get("name", "?")
+        desc = (tool.get("description") or "").strip().splitlines()
+        summary = desc[0] if desc else ""
+        if len(summary) > 90:
+            summary = summary[:90] + "..."
+        print(f"  {name:<14} {summary}")
+    print()
+
+
+def build_parser() -> "argparse.ArgumentParser":
+    import argparse
+
+    parser = argparse.ArgumentParser(
+        prog="python main.py",
+        description=(
+            "Coding Agent —— 一个具备完整工具集（文件读写、纯 Python Grep/Glob、"
+            "持久化 Shell、TodoWrite 规划等）的编码智能体。\n"
+            "默认进入交互式对话；也可用 -p 传入单个任务后一次性执行并退出。"
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=(
+            "示例：\n"
+            "  # 交互式对话（默认）\n"
+            "  python main.py\n\n"
+            "  # 一次性执行单个任务，完成后退出（适合脚本/CI）\n"
+            "  python main.py -p \"用 Glob 工具列出当前目录下所有 Python 文件\"\n\n"
+            "  # 离线查看全部可用工具（无需 API Key）\n"
+            "  python main.py --list-tools\n\n"
+            "  # 临时指定模型 / 供应商（覆盖 .env）\n"
+            "  python main.py --provider openrouter --model anthropic/claude-sonnet-4\n\n"
+            "配置：复制 .env.example 为 .env，填入所选供应商的 API Key。"
+            "详见 README.md 与 PROVIDERS.md。"
+        ),
+    )
+
+    parser.add_argument(
+        "-p", "--prompt",
+        metavar="任务",
+        help="以非交互模式运行：执行给定的单个任务后退出。省略则进入交互式对话。",
+    )
+    parser.add_argument(
+        "--list-tools",
+        action="store_true",
+        help="离线列出全部已注册工具及简介后退出（无需 API Key，可用于快速自检）。",
+    )
+    parser.add_argument(
+        "--provider",
+        choices=["anthropic", "openai", "openrouter"],
+        help="临时覆盖 .env 中的 PROVIDER 设置。",
+    )
+    parser.add_argument(
+        "--model",
+        metavar="模型名",
+        help="临时覆盖 .env 中的 DEFAULT_MODEL（例如 claude-sonnet-4-20250514）。",
+    )
+    parser.add_argument(
+        "--base-url",
+        metavar="URL",
+        help="临时覆盖 API Base URL（用于自建网关或兼容 OpenAI 的第三方服务）。",
+    )
+    parser.add_argument(
+        "--max-iterations",
+        type=int,
+        default=Config.MAX_ITERATIONS,
+        metavar="N",
+        help=f"单个任务的最大 Agent 迭代轮数（默认 {Config.MAX_ITERATIONS}）。",
+    )
+    parser.add_argument(
+        "--no-color",
+        action="store_true",
+        help="禁用彩色输出（管道 / 无 TTY 环境会自动禁用）。",
+    )
+    return parser
+
+
 def main():
     """Entry point"""
-    # Check for --no-color flag
-    use_colors = '--no-color' not in sys.argv
-    
-    # Create and run CLI
-    cli = CodingAgentCLI(use_colors=use_colors)
-    cli.run()
+    parser = build_parser()
+    args = parser.parse_args()
+
+    # 离线路径：仅列出工具，无需初始化 Agent 或 API Key
+    if args.list_tools:
+        list_tools()
+        return
+
+    cli = CodingAgentCLI(use_colors=not args.no_color)
+
+    if args.prompt:
+        # 非交互（一次性）模式
+        exit_code = cli.run_once(
+            args.prompt,
+            max_iterations=args.max_iterations,
+            model=args.model,
+            provider=args.provider,
+            base_url=args.base_url,
+        )
+        sys.exit(exit_code)
+    else:
+        # 交互模式（默认行为，保持不变）
+        cli.run(
+            max_iterations=args.max_iterations,
+            model=args.model,
+            provider=args.provider,
+            base_url=args.base_url,
+        )
 
 
 if __name__ == "__main__":

@@ -9,7 +9,8 @@ demo.py —— 自适应日志解析系统：自愈闭环演示
   系统【正确解析】了新格式。
 
 运行：
-  python demo.py            # 完整演示（两种新格式，两次 Agent 调用）
+  python demo.py            # 完整演示（两种新格式，两次 Agent 调用，需 API Key）
+  python demo.py --offline  # 离线演示：用预置解析器跑完整机制，无需 API Key
   python demo.py --quick    # 快速模式：只演示 1 种新格式，省一次 API 调用
   python demo.py --help     # 查看全部参数
 
@@ -19,12 +20,13 @@ demo.py —— 自适应日志解析系统：自愈闭环演示
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import textwrap
-from typing import List
+from typing import List, Tuple
 
 from engine import LogParserEngine, ParseError, builtin_json_parser
-from agent import CodeGenAgent
+from agent import CodeGenAgent, OfflineCodeGenAgent
 from tester import run_tests
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -71,17 +73,34 @@ def hr(title: str = "") -> None:
         print("=" * 78)
 
 
-def try_parse_all(engine: LogParserEngine, logs: List[str]) -> bool:
-    """尝试解析一批日志，打印结果；返回是否全部成功。"""
+def try_parse_all(
+    engine: LogParserEngine, logs: List[str]
+) -> Tuple[bool, List[dict]]:
+    """尝试解析一批日志，打印结果；返回 (是否全部成功, 成功解析出的结构化记录列表)。"""
     all_ok = True
+    records: List[dict] = []
     for line in logs:
         try:
             result = engine.parse_line(line)
+            records.append(result)
             print(f"  ✅ [{result['_parser']}] {result}")
         except ParseError:
             all_ok = False
             print(f"  ❌ 解析失败：{line}")
-    return all_ok
+    return all_ok, records
+
+
+def read_log_file(path: str) -> List[str]:
+    """从外部日志文件读取日志（每行一条，忽略空行）。"""
+    with open(path, "r", encoding="utf-8") as f:
+        return [line.rstrip("\n") for line in f if line.strip()]
+
+
+def write_output(path: str, records: List[dict]) -> None:
+    """把解析出的结构化记录写成 JSONL（每行一条 JSON）。"""
+    with open(path, "w", encoding="utf-8") as f:
+        for rec in records:
+            f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
 
 # ---------------------------------------------------------------------------
@@ -89,7 +108,7 @@ def try_parse_all(engine: LogParserEngine, logs: List[str]) -> bool:
 # ---------------------------------------------------------------------------
 def self_heal(
     engine: LogParserEngine,
-    agent: CodeGenAgent,
+    agent: "CodeGenAgent | OfflineCodeGenAgent",
     parser_name: str,
     samples: List[str],
     required_keys: List[str],
@@ -159,6 +178,8 @@ def main(args: argparse.Namespace) -> None:
     print("初始系统只内置一个基础解析器：JSON 行解析器。")
     if args.quick:
         print("（--quick 快速模式：仅演示 1 种新格式，省一次 Agent/API 调用）")
+    if args.offline:
+        print("（--offline 离线模式：用预置解析器代替 OpenAI，无需 API Key，机制完全一致）")
 
     os.makedirs(PARSERS_DIR, exist_ok=True)  # 确保持久化目录存在（新克隆时可能只有 .gitkeep）
 
@@ -166,7 +187,8 @@ def main(args: argparse.Namespace) -> None:
     engine.register("builtin_json", builtin_json_parser)
     print(f"当前已注册解析器：{engine.parser_names}")
 
-    agent = CodeGenAgent(model=args.model)  # model=None 时回落到 MODEL 环境变量/默认 gpt-4o-mini
+    # model=None 时回落到 MODEL 环境变量/默认 gpt-4o-mini；离线模式不触碰 API
+    agent = OfflineCodeGenAgent(args.model) if args.offline else CodeGenAgent(model=args.model)
     print(f"代码生成 Agent 使用模型：{agent.model}")
 
     # 步骤 0：基础 JSON 格式，系统本来就能解析
@@ -209,11 +231,19 @@ def main(args: argparse.Namespace) -> None:
     engine2.register("builtin_json", builtin_json_parser)
     loaded = engine2.load_persisted(PARSERS_DIR)
     print(f"新引擎从 parsers/ 热加载了：{loaded}")
-    print("直接解析之前的新格式（不再调用 Agent）：")
-    mixed = [JSON_LOGS[0], PIPE_LOGS[0]]
-    if not args.quick:
-        mixed.append(BRACKET_LOGS[0])  # 快速模式没生成 bracket_parser，混合样本里也不放它
-    all_ok = try_parse_all(engine2, mixed)
+    if args.log_file:
+        print(f"用学到的解析系统解析外部日志文件（不再调用 Agent）：{args.log_file}")
+        mixed = read_log_file(args.log_file)
+    else:
+        print("直接解析之前的新格式（不再调用 Agent）：")
+        mixed = [JSON_LOGS[0], PIPE_LOGS[0]]
+        if not args.quick:
+            mixed.append(BRACKET_LOGS[0])  # 快速模式没生成 bracket_parser，混合样本里也不放它
+    all_ok, records = try_parse_all(engine2, mixed)
+
+    if args.output:
+        write_output(args.output, records)
+        print(f"已将 {len(records)} 条结构化解析结果写入（JSONL）：{args.output}")
 
     hr("演示结束")
     print(f"新格式 A（竖线分隔）自愈结果：{'成功' if ok1 else '失败'}")
@@ -229,8 +259,15 @@ def build_arg_parser() -> argparse.ArgumentParser:
     """构造命令行参数解析器（提供 --help / --quick / --model）。"""
     parser = argparse.ArgumentParser(
         description="自适应日志解析系统：自愈闭环演示（检测失败 → Agent 生成解析代码 → "
-        "自动测试 → 热加载注册 → 持久化复用）。需要有效的 OPENAI_API_KEY。",
+        "自动测试 → 热加载注册 → 持久化复用）。默认走 OpenAI，需 OPENAI_API_KEY；"
+        "加 --offline 用预置解析器演示同一套机制，无需 API Key。",
         formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="离线模式：用预置（canned）解析器代码代替调用 OpenAI，无需 API Key，"
+        "确定性地演示“失败检测→生成→测试→热重载→持久化”整条机制。",
     )
     parser.add_argument(
         "--quick",
@@ -240,7 +277,21 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--model",
         default=None,
-        help="覆盖代码生成使用的模型；默认读取环境变量 MODEL，再回落到 gpt-4o-mini。",
+        help="覆盖代码生成使用的模型；默认读取环境变量 MODEL，再回落到 gpt-4o-mini。"
+        "（--offline 下此项仅作展示，不影响预置解析器。）",
+    )
+    parser.add_argument(
+        "--log-file",
+        default=None,
+        metavar="PATH",
+        help="外部日志文件路径（每行一条日志）。给定后，步骤 3 改用学到的解析系统解析"
+        "该文件，替代内置混合样本；用于验证学到的解析器可复用到真实日志流。",
+    )
+    parser.add_argument(
+        "--output",
+        default=None,
+        metavar="PATH",
+        help="把步骤 3 解析出的结构化结果以 JSONL（每行一条 JSON）写入该文件。",
     )
     return parser
 

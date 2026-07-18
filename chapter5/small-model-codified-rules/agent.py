@@ -139,9 +139,15 @@ def _dispatch(env: AirlineEnv, mode: str, name: str, args: dict) -> dict:
     return {"status": "error", "message": f"未知工具 {name}"}
 
 
-def run_agent(env: AirlineEnv, user_message: str, mode: str, verbose: bool = False) -> dict:
-    """跑一个 case，返回 {final_text, transcript}。env 被就地修改（状态即真值）。"""
+def run_agent(env: AirlineEnv, user_message: str, mode: str, verbose: bool = False,
+              model: str | None = None) -> dict:
+    """跑一个 case，返回 {final_text, transcript}。env 被就地修改（状态即真值）。
+
+    model 为空时回退到模块级默认 MODEL（小模型）。三方对照实验里，可用它把
+    "控制组"跑在一个更大的模型上，验证"小模型+代码化规则"能否追平"大模型裸跑"。
+    """
     assert mode in ("control", "codified")
+    model = model or MODEL
     client = _make_client()
 
     if mode == "control":
@@ -157,7 +163,7 @@ def run_agent(env: AirlineEnv, user_message: str, mode: str, verbose: bool = Fal
     final_text = ""
 
     for _turn in range(MAX_TURNS):
-        resp = _chat_with_retry(client, messages, tools)
+        resp = _chat_with_retry(client, messages, tools, model=model)
         msg = resp.choices[0].message
 
         if msg.tool_calls:
@@ -193,12 +199,13 @@ def run_agent(env: AirlineEnv, user_message: str, mode: str, verbose: bool = Fal
     return {"final_text": final_text, "transcript": transcript}
 
 
-def _chat_with_retry(client: OpenAI, messages, tools, retries: int = 3):
+def _chat_with_retry(client: OpenAI, messages, tools, model: str | None = None, retries: int = 3):
     last_err = None
+    model = model or MODEL
     for i in range(retries):
         try:
             return client.chat.completions.create(
-                model=MODEL,
+                model=model,
                 messages=messages,
                 tools=tools,
                 temperature=0.0,  # 尽量降低随机性，保证可复现

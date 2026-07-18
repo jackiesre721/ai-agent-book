@@ -64,18 +64,27 @@ python demo.py
 
 ### 常用参数（`python demo.py --help`）
 
-一次完整运行会做数十次 gpt-4o Vision 调用，较慢较贵。下列参数提供更快的路径：
+一次完整运行会做数十次 gpt-4o Vision 调用，较慢较贵。下列参数提供更快的路径，并允许更换论文、输出目录与模型：
 
 | 参数 | 作用 |
 |---|---|
-| `--smoke` | **只**验证 Slidev 渲染链路（渲染一个两页 deck），**不调用任何 LLM、无需 API Key**。最快的“没搞坏渲染”自检。 |
+| `--paper PATH` | 输入论文的 Markdown 路径（默认 `paper/sample_paper.md`）。换成你自己的论文即可。 |
+| `--out-dir DIR` | 产物输出目录（默认 `output/`）：各轮 `slides.md`/`review.json`/`comparison_summary.json`。渲染 PNG 始终在 `slidev_workspace/exports/`。 |
+| `--text-model NAME` | Proposer / 单 Agent 文本模型，**覆盖** `TEXT_MODEL` 环境变量（默认 `gpt-4o`）。 |
+| `--vision-model NAME` | Reviewer / 独立评委看图模型（须支持图像），**覆盖** `VISION_MODEL` 环境变量（默认 `gpt-4o`）。 |
 | `--mode {both,dual,single}` | 只跑一种方案（`dual`=提议者-审核者，`single`=单 Agent 自审），省一半时间/费用；`both`（默认）才做跨方案对比。 |
 | `--max-rounds N` | 每种方案的最大迭代轮数（默认 3）。`--max-rounds 1` 只出首版、不修订，是最快的**真实 LLM** 冒烟。 |
+| `--dry-run` | **离线走通提议者-审核者循环**：真实渲染两版脚本化 `slides.md`（拥挤初稿→拆页修订稿），用**确定性启发式规则**（按每页文字量判定，非 Vision LLM）扮演 Reviewer，完整展示“生成→渲染→审查→修订”闭环。**不调用任何 LLM、无需 API Key**。 |
+| `--smoke` | **只**验证 Slidev 渲染链路（渲染一个两页 deck），**不调用任何 LLM、无需 API Key**。最快的“没搞坏渲染”自检。 |
 
 ```bash
 python demo.py --smoke                 # 不花钱，验证 Node/Slidev/chromium 可用
-python demo.py --mode dual --max-rounds 1   # 一次真实 LLM 冒烟
+python demo.py --dry-run               # 不花钱，离线看清提议者-审核者闭环（真实渲染）
+python demo.py --mode dual --max-rounds 1   # 一次真实 LLM 冒烟（需 API Key）
+python demo.py --paper my_paper.md --out-dir run_my   # 换论文、换输出目录
 ```
+
+> `--dry-run` 里的两版 `slides.md` 是**脚本化**的（不是 LLM 生成），Reviewer 也只是按字符数判定拥挤的**启发式规则**、并非 Vision LLM——它只用来在没有 API Key 时把闭环**结构**跑通、产出真实渲染的 PNG。要看 gpt-4o **真的看像素**审查，请用 `python demo.py`（需 `OPENAI_API_KEY`）。一次离线 dry-run 的真实结果：初稿 4 页（第 2/3/4 页被判 high 级 overcrowded、score=55、pass=False）→ 拆页修订稿 18 页（score=100、pass=True），渲染 PNG 见 `slidev_workspace/exports/dryrun_round*/`。
 
 ## 文件说明
 
@@ -119,12 +128,13 @@ slidev_workspace/exports/
 
 ## 如何适配 / 扩展
 
-- **换模型 / 换供应商**：全部通过环境变量（见 `env.example`），代码无需改动。
+- **换模型 / 换供应商**：通过环境变量（见 `env.example`）或命令行参数（优先级更高），代码无需改动。
   - `OPENAI_API_KEY`：密钥（必填）。
   - `OPENAI_BASE_URL`：指向任何兼容 OpenAI 协议的端点（自建网关 / 其它供应商）。
-  - `TEXT_MODEL`：Proposer / 单 Agent 文本部分用的模型（默认 `gpt-4o`）。
-  - `VISION_MODEL`：Reviewer / 独立评委看图用的模型，**必须支持图像输入**（默认 `gpt-4o`）。
-- **换输入论文**：替换 `paper/sample_paper.md`（保留 Markdown 章节结构即可）。若新论文有自己的
+  - `TEXT_MODEL` / `--text-model`：Proposer / 单 Agent 文本部分用的模型（默认 `gpt-4o`）。
+  - `VISION_MODEL` / `--vision-model`：Reviewer / 独立评委看图用的模型，**必须支持图像输入**（默认 `gpt-4o`）。
+- **换输入论文 / 输出目录**：命令行 `--paper PATH` 指定论文、`--out-dir DIR` 指定产物目录（无需改代码）；
+  也可直接替换 `paper/sample_paper.md`（保留 Markdown 章节结构即可）。若新论文有自己的
   数据图表，改 `make_figures.py` 里的画图函数并更新 `generate_all()` 返回的 `{文件名: 描述}`，
   Proposer 会据描述引用这些图。
 - **Slidev 渲染依赖（重要）**：渲染链路依赖 **Node** + 本目录内 `node_modules/`，其中包含

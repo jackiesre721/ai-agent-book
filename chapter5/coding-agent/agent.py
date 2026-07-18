@@ -307,7 +307,6 @@ class CodingAgent:
                 "tools": openai_tools,
                 "stream": True,
             }
-            print(params)
             stream = self.client.chat.completions.create(**params)
             
             assistant_message = {"role": "assistant", "content": ""}

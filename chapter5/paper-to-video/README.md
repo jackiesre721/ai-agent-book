@@ -40,7 +40,24 @@ python demo.py                       # 生成全部 5 页的完整讲解视频
 python demo.py --check     # 环境自检：检查 ffmpeg/ffprobe/字体/配置，不调用任何 API
 python demo.py --quick     # 快速冒烟：只跑第 1 页（等价 --limit 1），省时省钱
 python demo.py --limit 2   # 只处理前 2 页
+python demo.py --offline   # 无需 API：占位静音音轨，验证整条 ffmpeg 合成流水线
 ```
+
+完整参数：
+
+| 参数 | 说明 |
+| --- | --- |
+| `--slides FILE` | 幻灯片内容 JSON（`[{title, subtitle, bullets}, ...]`），替换内置示例 |
+| `--script FILE` | 现成讲解词 JSON（字符串列表，每页一段），提供后**跳过 LLM 生成** |
+| `-o, --output FILE` | 最终视频输出路径（默认 `output/lecture.mp4`） |
+| `--tts-provider {openai,offline}` | TTS 供应商；`offline` 用 ffmpeg 生成占位静音音轨（无需 API） |
+| `--offline` | 完全离线：等价 `--tts-provider offline`，并用要点占位讲解词（零 API 调用） |
+| `--text-model / --tts-model / --tts-voice` | 覆盖模型/音色（默认取同名环境变量） |
+| `--limit N / --quick / --check` | 只跑前 N 页 / 只跑第 1 页 / 仅自检 |
+
+> **离线验证**：`--offline` 不需要任何 API Key 或网络，用 `ffmpeg anullsrc` 按讲解词字数
+> 估算时长合成静音占位音轨，跑通「渲染 → 估时 → 逐页合成 → concat 拼接」全链路，
+> 专门用于验证 ffmpeg 的**逐页时长对齐**是否正确（音轨为静音占位，非真实配音）。
 
 产物：
 - `output/slides/slide_*.png`   每页幻灯片
@@ -81,15 +98,18 @@ ffprobe -v error -show_format -show_streams output/lecture.mp4
 
 ## 如何适配 / 扩展
 
-- **换模型 / 换供应商**：全部通过环境变量控制，无需改代码：
-  - `TEXT_MODEL`：讲解词生成模型（默认 `gpt-4o-mini`，可换 `gpt-4o` 等）。
-  - `TTS_MODEL` / `TTS_VOICE`：语音模型与音色（默认 `tts-1` / `alloy`，音色可选
-    `nova` / `shimmer` / `echo` 等）。
+- **换模型 / 换供应商**：环境变量或命令行均可，无需改代码：
+  - `TEXT_MODEL` / `--text-model`：讲解词生成模型（默认 `gpt-4o-mini`，可换 `gpt-4o` 等）。
+  - `TTS_MODEL` / `TTS_VOICE`（或 `--tts-model` / `--tts-voice`）：语音模型与音色
+    （默认 `tts-1` / `alloy`，音色可选 `nova` / `shimmer` / `echo` 等）。
+  - `--tts-provider offline`：切到离线占位音轨（不产生任何 API 调用），用于本地验证。
   - `OPENAI_BASE_URL`：指向任何**兼容 OpenAI 协议**的自定义端点（自建网关、代理或
     第三方供应商）；配合对应的 `OPENAI_API_KEY` 即可切换后端。
-- **换输入（换论文 / PDF）**：编辑 `demo.py` 中的 `SLIDES` 列表（标题 / 副标题 / 要点）；
-  若已有真实 PDF，可先用 5-4 的「论文 → PPT」流程产出要点或 Slidev 截图，再喂给本脚本，
-  其余「讲解词 → TTS → 合成」流程不变。
+- **换输入（换论文 / PDF）**：用 `--slides my.json` 传入外部幻灯片内容，或直接编辑
+  `demo.py` 中的 `SLIDES` 列表（标题 / 副标题 / 要点）；若已有真实 PDF，可先用 5-4 的
+  「论文 → PPT」流程产出要点或 Slidev 截图，再喂给本脚本，其余流程不变。
+- **自带讲解词**：用 `--script narr.json`（每页一段的字符串列表）跳过 LLM 生成，
+  直接进入「TTS → 合成」，便于人工润色脚本后重跑。
 - **更长视频**：增加 `SLIDES` 页数或加长每页讲解词即可（单次 5~15 分钟）。
 - **快速调参**：先用 `--quick` / `--limit N` 只渲染少量页，确认音色/风格满意后再跑全量。
 

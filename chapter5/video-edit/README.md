@@ -1,15 +1,21 @@
 # 实验 5-6：基于 API 的智能视频剪辑
 
 《深入理解 AI Agent》配套实验。用户给一段含多个场景的视频 + 一句自然语言需求
-（如"把冲浪部分剪出来"），Agent 自动定位目标场景、剪出片段并自我审查。
+（如"把冲浪部分剪出来"），Agent 自动定位目标场景、**生成 Blender Python API 脚本**
+剪出片段并自我审查。
 
 ## 目的
 
-验证两个核心机制在多媒体处理中的作用：
+验证三个核心机制在多媒体处理中的作用：
 
 1. **两步 Vision 定位**：Proposer 无法直接"看懂"视频，于是委托一个**视频分析子 Agent**，
    用 ffmpeg 抽帧 + Vision LLM 读图来定位目标场景的时间边界。
-2. **提议者-审核者（Proposer / Reviewer）**：Proposer 剪辑后无法自证效果，
+2. **代码生成（Blender Python API）**：Proposer 把剪辑计划翻译成一段调用 **Blender
+   Python API（bpy）** 的脚本——导入 / 裁剪 / 字幕 / 变速 / 渲染各对应一个 API 调用，
+   用 `blender --background --python edit.py` 无头执行。这正是书中"把视频编辑重构为
+   API 调用和代码生成问题"的落地。未装 Blender 时脚本照常生成（代码生成产物），
+   实际渲染回退到 ffmpeg（见下文"剪辑后端"）。
+3. **提议者-审核者（Proposer / Reviewer）**：Proposer 剪辑后无法自证效果，
    由 Reviewer 抽取成片关键帧、用 Vision LLM 检查是否剪对，不合格则反馈、迭代。
 
 ## 两步定位原理
@@ -33,8 +39,8 @@ NL 需求 ──► Proposer 解析意图（目标场景 + 特效）
          视频分析子 Agent 两步定位 ──► [start, end]
               │
               ▼
-         Proposer 用 ffmpeg 剪辑（可加字幕/慢动作）
-              │
+         Proposer 生成 Blender bpy 脚本（edit.py）──► 渲染剪辑（可加字幕/慢动作）
+              │                                        装了 Blender 用 bpy，否则回退 ffmpeg
               ▼
          Reviewer 抽首/中/尾关键帧 ──► Vision 检查 pass/fail + 反馈
               │pass?  否 → Proposer 据反馈修正边界，重剪（最多 3 轮）
@@ -49,18 +55,56 @@ pip install -r requirements.txt
 cp env.example .env        # 填入有效的 OPENAI_API_KEY
 python demo.py             # 默认需求"把冲浪的部分剪出来"（完整流程）
 python demo.py "把滑雪部分剪出来，并加上字幕 Winter"   # 自定义需求
+python demo.py -i my.mp4 -o out.mp4 "把演讲开场剪出来"  # 用自己的视频 + 自定义输出
+python demo.py --backend blender   # 强制用 Blender Python API 无头渲染（需装 Blender）
+python demo.py --vision-model gpt-4o-mini   # 覆盖模型（也可用 --text-model）
 python demo.py --quick     # 快速模式：粗采样 + 单轮审查，Vision 调用最少（省时省钱）
-python demo.py --smoke     # 冒烟自检：仅 ffmpeg 抽帧/剪辑，不调用任何 API
+python demo.py --smoke     # 冒烟自检：仅剪辑链路 + 生成 bpy 脚本，不调用任何 API
 python demo.py --help      # 查看全部参数
 ```
 
-一条命令即可跑通：生成测试视频 → 两步定位 → 剪辑 → 审查 → 输出 `output/final.mp4`。
+常用参数（完整见 `--help`）：`--input/-i` 输入视频、`--output/-o` 成片路径、
+`--backend {auto,blender,ffmpeg}` 剪辑后端、`--text-model`/`--vision-model` 覆盖模型。
+
+一条命令即可跑通：生成/读取视频 → 两步定位 → 生成 bpy 脚本剪辑 → 审查 → 输出成片。
 每次运行都会清空 `output/`，从干净状态开始（幂等可重复）。完整流程会多次调用
 Vision 模型（较慢/耗费额度）；只想验证链路时先跑 `--smoke`（零 API），或用 `--quick`。
 
 ## 预期输出示例
 
-以下为 `python demo.py --quick`（默认需求"把冲浪的部分剪出来"）的真实节选：
+### `--smoke`（零 API，可复现）
+
+以下为 `python demo.py --smoke` 的**真实输出**（无需 OpenAI Key，仅需 ffmpeg）：
+
+```text
+==========================================================================
+  冒烟自检 | 剪辑链路 + bpy 脚本生成，不调用任何 API
+==========================================================================
+[1/3] 生成测试视频 OK：output/source.mp4（场景真值={'hiking': (0, 15), 'surfing': (15, 30), 'skiing': (30, 42), 'cycling': (42, 54)}）
+[2/3] 抽帧 OK：output/frames/smoke.png
+[3/3] 剪辑+字幕 OK（后端=ffmpeg（未装 Blender，回退））：
+  文件: smoke_cut.mp4
+  时长: 5.03s
+  容器: mov,mp4,m4a,3gp,3g2,mj2
+  大小: 121.4 KB
+  视频流: h264 1280x720 @ 30/1 fps
+  音频流: aac 44100Hz 1ch
+
+已生成 Proposer 的 Blender 脚本：output/edit.py
+（这正是书中'生成 Blender Python API 代码'的产物；装好 Blender 后可直接
+ `blender --background --python output/edit.py` 无头渲染。）
+
+✓ 冒烟自检通过：剪辑链路正常 + bpy 脚本已生成（未调用 OpenAI）。
+```
+
+生成的 `output/edit.py` 是一段**可执行的 Blender bpy 脚本**（`new_movie` 导入、
+`frame_offset_start`/`frame_final_duration` 裁剪、`new_effect(type='TEXT')` 字幕、
+`bpy.ops.render.render` 渲染），本机对其做过 `py_compile` 语法校验。
+
+### `--quick`（完整链路，需 API）
+
+以下为 `python demo.py --quick`（默认需求"把冲浪的部分剪出来"）的真实节选（定位/误差/
+token 部分与剪辑后端无关，故不受 bpy/ffmpeg 后端切换影响）：
 
 ```text
 步骤 1 | Proposer 解析自然语言需求
@@ -86,6 +130,7 @@ Token 统计（子 Agent 隔离截图，主上下文不被污染）
 | 文件 | 时长 | 说明 |
 | --- | --- | --- |
 | `source.mp4` | 54.0s | 程序化生成的 4 场景测试原片 |
+| `edit_round1.py` | — | Proposer 生成的 Blender bpy 脚本（代码生成产物，可换机执行） |
 | `cut_round1.mp4` | 12.0s | 第 1 轮剪出的候选片段 |
 | `final.mp4` | 12.0s | 采用的成片（H.264 + AAC，1280x720@30fps） |
 
@@ -125,39 +170,44 @@ export TEXT_MODEL=gpt-4o-mini
 （HIKING 绿 / SURFING 蓝 / SKIING 白 / CYCLING 橙），每段都叠加大号场景名与时间码水印，
 让 Vision 仅凭画面就能准确定位——便于复现验收。
 
-换成**你自己的真实视频**：把 `demo.py` 里的 `SOURCE_VIDEO` 指向你的 mp4，
-并注释掉步骤 0 里的 `make_test_video(...)` 调用即可，其余流程完全不变。
+换成**你自己的真实视频**：直接 `python demo.py -i 你的.mp4 -o 输出.mp4 "剪辑需求"`
+即可（无需改代码）。此时跳过测试片生成，也不再打印定位误差（外部视频无真值）。
 
-### Blender vs. ffmpeg（执行后端）
+### Blender vs. ffmpeg（剪辑后端）
 
-本项目的**实际剪辑后端是 ffmpeg**（本机未安装 Blender）。
-书中原方案用 **Blender Python API（bpy）** 驱动视频序列编辑器完成剪辑。
-本机未安装 Blender，故本 demo 用 **ffmpeg** 完成等价的裁剪/拼接/字幕/慢动作。
+书中原方案用 **Blender Python API（bpy）** 驱动视频序列编辑器（VSE）完成剪辑。
+本项目把它实现为**一等后端**：`blender_editor.generate_bpy_script()` 把剪辑计划翻译成
+一段真实可执行的 bpy 脚本（`new_movie` 导入、`frame_offset_start`/`frame_final_duration`
+裁剪、`new_effect(type='TEXT'/'SPEED')` 字幕/变速、`bpy.ops.render.render` 渲染），
+`render_with_blender()` 再用 `blender --background --python edit.py` 无头执行。
 
-- 执行层集中在 `video_editor.py`，`apply_edit()` 是唯一的剪辑出口；
-- 该文件末尾以注释给出了**等价的 Blender bpy 骨架**（新建序列、设 frame_offset、
-  TEXT/SPEED 特效、`bpy.ops.render.render`），读者装好 Blender 后**只需替换这一个文件**，
-  `agents.py`/`demo.py` 无需改动——因为核心的"两步 Vision 定位 + 提议者-审核者"与执行层解耦。
+- `--backend blender`：强制走 Blender（需 `blender --version` 可用）；
+- `--backend ffmpeg`：强制走 ffmpeg；
+- `--backend auto`（默认）：装了 Blender 用 bpy，否则回退 ffmpeg。
 
-**如何切换与取舍：** 装好 Blender 后（`blender --version` 可用），把 `apply_edit()`
-改为生成一段 bpy 脚本并用 `blender --background --python edit.py` 执行即可。两种后端的取舍：
+**关键点：无论哪个后端，Proposer 生成的 bpy 脚本都会落盘到 `output/edit_round*.py`**
+（`--smoke` 下为 `output/edit.py`）——即"生成 Blender Python API 代码"这一核心产物，
+可人工核对、也可拷到装了 Blender 的机器上执行。本机未安装 Blender，故本仓库的实际
+渲染由 ffmpeg 完成并验证；bpy 脚本已通过 `py_compile` 语法校验，但**未在真实 Blender
+上跑过渲染**（装好 Blender 后即可用 `--backend blender` 端到端执行）。两种后端的取舍：
 
-| | ffmpeg（当前） | Blender（bpy） |
+| | ffmpeg | Blender（bpy） |
 | --- | --- | --- |
 | 定位 | 裁剪/拼接/字幕/变速等 2D 流水线 | 3D 场景、合成、关键帧动画、粒子/摄像机 |
 | 上手 | 单二进制、无 GUI、CI 友好 | 需装完整 Blender，体积大、渲染慢 |
 | 适用 | 绝大多数"剪一段 + 简单特效"需求 | 需要 3D 合成/复杂转场/图层混合时才值得 |
 
-结论：本实验只做时间轴裁剪与轻量特效，ffmpeg 更快更省依赖；仅当需要真正的 3D/合成
-能力时，才建议切到 Blender。
+核心的"两步 Vision 定位 + 提议者-审核者"与执行层解耦，两个后端共用同一份剪辑计划，
+`agents.py`/`demo.py` 无需为切换后端改动逻辑。
 
 ## 文件
 
 | 文件 | 作用 |
 | --- | --- |
-| `demo.py` | 一条命令跑通的编排入口（含启动自检、迭代循环、token 统计） |
+| `demo.py` | 一条命令跑通的编排入口（CLI、启动自检、迭代循环、token 统计） |
 | `agents.py` | `VideoAnalyzerAgent`（两步定位）/ `ProposerAgent` / `ReviewerAgent` |
-| `video_editor.py` | ffmpeg 剪辑执行层 + Blender 版接口参考 |
+| `blender_editor.py` | **Blender bpy 脚本生成 + 无头渲染**（书中原方案，核心实验点） |
+| `video_editor.py` | 剪辑执行层：`apply_edit()` 统一入口，调度 Blender/ffmpeg 双后端 |
 | `make_test_video.py` | 程序化生成含 4 个场景的测试视频 |
 | `ffmpeg_utils.py` | ffmpeg/ffprobe 薄封装（统一错误检查、抽帧、探测时长/流） |
 

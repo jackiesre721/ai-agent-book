@@ -27,8 +27,9 @@ Agent 自主**定位并修改前端源码**，开发模式下的**热加载（HM
   原始界面做 diff 的对照基准。
 - **`frontend/`（React + Vite 前端）**：被定制的对象。Agent 改的就是这里的 `src/*`；
   开发模式下 Vite **HMR** 让改动即时可见，`vite build` 用于验证"改动没破坏应用"。
-- **`backend/`（FastAPI 后端）**：最小 chatbot 服务（`/api/chat` 回声式回复），
-  为前端提供可对话的载体；`uvicorn --reload` 演示"后端热加载"。它不参与 UI 定制，
+- **`backend/`（FastAPI 后端）**：最小 chatbot 服务（`/api/chat`），为前端提供可对话的载体；
+  默认 **echo 回声**模式（开箱即用、无需任何 Key），也可用 `--model` 一键切到**真实 LLM 对话**；
+  自带命令行入口（`python main.py --help`），`--reload` 演示"后端热加载"。它不参与 UI 定制，
   是让整套界面能真实跑起来的配角。
 
 一句话：**Agent 读需求 → 改前端源码 → 断言改动生效 + 构建不破坏**，
@@ -96,8 +97,10 @@ python demo.py -h         # 查看全部参数
 ### 3) 手动体验真实 HMR（可选，需要浏览器）
 
 ```bash
-# 终端 A：后端（热加载）
-cd backend && uvicorn main:app --reload --port 8000
+# 终端 A：后端（热加载）。两种启动方式行为一致，任选其一：
+cd backend && python main.py --reload --port 8000          # 本文件自带命令行入口
+#   或： cd backend && uvicorn main:app --reload --port 8000   # 书中示例写法
+#   想让运行起来的 chatbot 真会说话（而非回声）：加 --model gpt-4o-mini（需 OPENAI_API_KEY）
 
 # 终端 B：前端（HMR）
 cd frontend && npm run dev
@@ -108,6 +111,20 @@ python -c "import agent,pathlib; c,m=agent.build_client_and_model(); \
 r=agent.customize(c,m,pathlib.Path('frontend'),'把发送按钮改成橙色'); \
 [pathlib.Path('frontend',f['path']).write_text(f['content']) for f in r['files']]"
 ```
+
+后端命令行参数（`cd backend && python main.py --help`）：
+
+| 参数 | 说明 | 默认 |
+| --- | --- | --- |
+| `--host` | 监听地址（对外可用 `0.0.0.0`） | `127.0.0.1` |
+| `--port` | 监听端口（前端把 `/api` 代理到此端口） | `8000` |
+| `--reload` / `--no-reload` | 是否开启后端热加载 | 开启 |
+| `--model NAME` | 指定模型名，切到真实 LLM 对话；缺省为 echo 回声模式（也可用环境变量 `CHAT_MODEL`） | 无（echo） |
+| `--log-level` | uvicorn 日志/输出级别 | `info` |
+| `--print-config` | 只打印生效配置(JSON)后退出，不监听端口（便于无端口环境下校验） | 关 |
+
+> echo 与 LLM 两种模式都不影响 UI 定制闭环——定制作用于**前端源码**，后端只是让界面能真实对话的载体。
+> LLM 模式复用与 `agent.py` 相同的 `OPENAI_API_KEY` / `OPENAI_BASE_URL` 配置；缺 Key 或调用失败会自动回退占位提示，绝不编造回复。
 
 ## 验证方式与局限
 
@@ -170,5 +187,6 @@ r=agent.customize(c,m,pathlib.Path('frontend'),'把发送按钮改成橙色'); \
   即可把自己的定制需求纳入自动断言闭环。
 - **接前端**：`frontend/` 是标准 Vite 工程，`npm run dev` 起 HMR、`npm run build` 出静态产物。
   想接自己的界面，替换 `src/*` 并同步更新白名单与 `baseline/` 快照即可。
-- **接后端 / 真实 LLM 对话**：`backend/main.py` 的 `/api/chat` 目前是回声式占位回复，
-  把其中的返回逻辑替换为对模型的调用（同样可复用上面的 `OPENAI_*` 配置），即可变成真实客服。
+- **接后端 / 真实 LLM 对话**：`backend/main.py` 的 `/api/chat` 默认是回声式占位回复，
+  加 `--model <模型名>`（或设 `CHAT_MODEL`）即可切到真实 LLM 对话（复用上面的 `OPENAI_*` 配置）变成真实客服；
+  想换成自定义业务逻辑，改写 `_llm_reply` 或 `chat` 里的返回即可。

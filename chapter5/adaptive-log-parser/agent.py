@@ -102,3 +102,69 @@ class CodeGenAgent:
             ],
         )
         return _extract_code(resp.choices[0].message.content or "")
+
+
+# ---------------------------------------------------------------------------
+# 离线（无 API）代码生成 Agent
+# ---------------------------------------------------------------------------
+# 与 CodeGenAgent 接口完全一致，但不调用 OpenAI，而是根据必需字段返回**预置**的
+# 解析器源码。它的用途是：在没有 API Key 的环境里，仍能确定性地演示与验证整条
+# 机制——失败检测 → （预置）生成代码 → 自动测试 → 热加载注册 → 持久化复用。
+# 注意：这里的“生成”是查表返回预写好的代码，并非真正让 LLM 现写；只有换用
+# CodeGenAgent 才是真正的代码生成。
+_CANNED_PARSERS = {
+    # 竖线分隔格式：时间戳|级别|模块|step=N|消息
+    frozenset(["timestamp", "level", "module", "step", "message"]): '''import re
+
+
+def parse(line: str) -> dict | None:
+    pattern = (
+        r"^(?P<timestamp>\\S+)\\|(?P<level>\\S+)\\|(?P<module>\\S+)"
+        r"\\|step=(?P<step>\\d+)\\|(?P<message>.+)$"
+    )
+    match = re.match(pattern, line.strip())
+    if match:
+        return match.groupdict()
+    return None
+''',
+    # 嵌套括号格式：[时间] (级别) <tool=名字> {k=v k=v} :: 消息
+    frozenset(["timestamp", "level", "tool", "message"]): '''import re
+
+
+def parse(line: str) -> dict | None:
+    pattern = (
+        r"\\[(?P<timestamp>.*?)\\] \\((?P<level>.*?)\\) <tool=(?P<tool>.*?)> "
+        r"\\{latency_ms=(?P<latency_ms>\\d+) status=(?P<status>\\w+)\\} :: (?P<message>.*)"
+    )
+    match = re.match(pattern, line.strip())
+    if match:
+        return match.groupdict()
+    return None
+''',
+}
+
+
+class OfflineCodeGenAgent:
+    """离线桩：查表返回预置解析器代码，接口与 CodeGenAgent 一致（无需 API Key）。"""
+
+    def __init__(self, model: Optional[str] = None):
+        self.model = model or "offline-canned"
+
+    def generate_parser_code(
+        self,
+        samples: List[str],
+        required_keys: List[str],
+        error_report: str,
+        feedback: Optional[str] = None,
+    ) -> str:
+        key = frozenset(required_keys)
+        code = _CANNED_PARSERS.get(key)
+        if code is not None:
+            return code
+        # 未预置该格式：返回一个永远返回 None 的桩，让自动测试如实失败，
+        # 从而演示“测试未通过 → 放弃该格式”的分支（离线模式无法真正现写代码）。
+        return (
+            "def parse(line: str) -> dict | None:\n"
+            "    # 离线模式未预置该格式的解析器\n"
+            "    return None\n"
+        )

@@ -1,32 +1,37 @@
 """
-实验 5-3 主程序：控制组（纯自然语言规则） vs 实验组（代码化规则三重保障）
+实验 5-3 主程序：小模型靠"代码化规则"追平大模型的可靠性
 
-跑法：
-    python demo.py            # 跑全部 8 个 case，两组对比
-    python demo.py --quick    # 只跑前 4 个 case（省钱快看）
-    python demo.py -v         # 打印每步工具调用
+三方对照（核心主张）：
+    A. 小模型 + 代码化规则（实验组，三重保障）
+    B. 小模型 · 纯自然语言（控制组）
+    C. 大模型 · 纯自然语言（可选基线，--big-model 开启）
+预期：A 的任务成功率 ≈ C，且都显著高于 B —— 即"把业务规则写成代码化守卫"，
+能让一个小模型在复杂政策执行上追平大模型裸跑的可靠性。
 
 指标：
     - 任务成功率：最终退款结果是否符合代码化政策真值。
     - 政策违规次数：多退款（该拒不拒） + 该退不退，两个方向都算。
     - 无效工具调用次数：被代码校验拒绝 / 未知预订等返回 error/rejected 的调用。
     - expected_* 自报值 vs 数据库真值 不一致比例（仅实验组，验证服务端真值校验的必要性）。
+
+常用跑法见 `--help`；`--selftest` 无需 API Key，离线演示三层守卫的代码化校验逻辑。
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 
 try:
     from dotenv import load_dotenv
-    load_dotenv()  # 若存在 .env 则加载 OPENAI_API_KEY / MODEL
+    load_dotenv()  # 若存在 .env 则加载 OPENAI_API_KEY / MODEL / BIG_MODEL
 except ImportError:
     pass
 
-from airline_env import AirlineEnv
-from agent import run_agent, MODEL
+from airline_env import AirlineEnv, is_refundable, SERVER_NOW
+from agent import MODEL
 from tasks import TASKS
 
 
@@ -58,12 +63,34 @@ def judge(task, env, final_text) -> dict:
     }
 
 
-def run_group(mode: str, tasks, verbose: bool) -> list[dict]:
-    print(f"\n{'='*72}\n运行 {'控制组 (纯自然语言规则)' if mode=='control' else '实验组 (代码化规则·三重保障)'}  模型={MODEL}\n{'='*72}")
+# ---------------------------------------------------------------------------
+# 对照臂（arm）：每一臂是 (模式, 模型) 的组合
+# ---------------------------------------------------------------------------
+def build_arms(small_model: str, big_model: str | None, mode: str) -> list[dict]:
+    """按 --mode / --big-model 组装本次要跑的对照臂。默认（both、无大模型）
+    与旧版行为一致：控制组 + 实验组，均在小模型上。"""
+    arms: list[dict] = []
+    if mode in ("control", "both"):
+        arms.append({"key": "small_control", "mode": "control", "model": small_model,
+                     "label": "小模型·纯自然语言", "role": "控制组"})
+    if mode in ("codified", "both"):
+        arms.append({"key": "small_codified", "mode": "codified", "model": small_model,
+                     "label": "小模型+代码化规则", "role": "实验组"})
+    if big_model:  # 可选第三臂：大模型裸跑基线（纯自然语言）
+        arms.append({"key": "big_control", "mode": "control", "model": big_model,
+                     "label": "大模型·纯自然语言", "role": "大模型基线"})
+    return arms
+
+
+def run_arm(arm: dict, tasks, verbose: bool) -> list[dict]:
+    # 延迟导入 run_agent：仅在真正要调用模型时才需要（--selftest 不走这里）
+    from agent import run_agent
+
+    print(f"\n{'='*72}\n运行 [{arm['role']}] {arm['label']}  模型={arm['model']}\n{'='*72}")
     results = []
     for task in tasks:
         env = AirlineEnv(task.reservation)
-        out = run_agent(env, task.user_message, mode, verbose=verbose)
+        out = run_agent(env, task.user_message, arm["mode"], verbose=verbose, model=arm["model"])
         r = judge(task, env, out["final_text"])
         r["final_text"] = out["final_text"]
         r["transcript"] = out["transcript"]
@@ -90,33 +117,40 @@ def summarize(results: list[dict]) -> dict:
     }
 
 
-def print_comparison(sc, se):
-    print(f"\n{'#'*72}\n# 指标对比：控制组 vs 实验组\n{'#'*72}")
-    rows = [
-        ("任务成功率", f"{sc['success']}/{sc['n']} = {sc['success_rate']*100:.0f}%",
-                       f"{se['success']}/{se['n']} = {se['success_rate']*100:.0f}%"),
-        ("政策违规次数", str(sc["violations"]), str(se["violations"])),
-        ("无效工具调用次数", str(sc["invalid"]), str(se["invalid"])),
-    ]
-    w1, w2, w3 = 20, 24, 24
-    print(f"{'指标':<{w1}}{'控制组':<{w2}}{'实验组':<{w3}}")
-    print("-" * (w1 + w2 + w3))
-    for name, a, b in rows:
-        print(f"{name:<{w1}}{a:<{w2}}{b:<{w3}}")
+def print_comparison(arms: list[dict], summaries: list[dict]):
+    print(f"\n{'#'*72}\n# 指标对比（{len(arms)} 臂）\n{'#'*72}")
+    col = 24
+    label_w = 20
+    # 表头
+    header = f"{'指标':<{label_w}}" + "".join(f"{a['label']:<{col}}" for a in arms)
+    print(header)
+    print("-" * (label_w + col * len(arms)))
+    # 任务成功率
+    rate_cells = ["{}/{} = {:.0f}%".format(s["success"], s["n"], s["success_rate"] * 100) for s in summaries]
+    print(f"{'任务成功率':<{label_w}}" + "".join(f"{c:<{col}}" for c in rate_cells))
+    print(f"{'政策违规次数':<{label_w}}" + "".join(f"{str(s['violations']):<{col}}" for s in summaries))
+    print(f"{'无效工具调用次数':<{label_w}}" + "".join(f"{str(s['invalid']):<{col}}" for s in summaries))
 
-    print(f"\n[实验组] expected_* 自报值 vs 数据库真值：")
-    if se["checklist_total"]:
-        ratio = se["checklist_mismatch"] / se["checklist_total"]
-        print(f"  共 {se['checklist_total']} 次带 checklist 的取消调用，其中 {se['checklist_mismatch']} 次"
-              f"与真值不一致 —— 不一致比例 = {ratio*100:.0f}%")
-        print("  （说明：模型的自我认知会出错；若无服务端真值校验，这些错误会直接变成违规操作。）")
-    else:
-        print("  本次运行无 checklist 记录。")
+    # 核心主张的一句话解读（当同时有 实验组 与 大模型基线 时）
+    by_role = {a["role"]: s for a, s in zip(arms, summaries)}
+    if "实验组" in by_role and "大模型基线" in by_role:
+        exp, big = by_role["实验组"], by_role["大模型基线"]
+        print(f"\n[核心主张] 小模型+代码化规则 成功率 {exp['success_rate']*100:.0f}% "
+              f"vs 大模型裸跑 {big['success_rate']*100:.0f}%"
+              + ("（追平/超过）" if exp["success_rate"] >= big["success_rate"] else "（尚有差距）"))
+
+    # expected_* 一致性（仅实验组存在 checklist）
+    exp_summ = by_role.get("实验组")
+    if exp_summ and exp_summ["checklist_total"]:
+        ratio = exp_summ["checklist_mismatch"] / exp_summ["checklist_total"]
+        print(f"\n[实验组] expected_* 自报值 vs 数据库真值：共 {exp_summ['checklist_total']} 次带 checklist 的取消调用，"
+              f"其中 {exp_summ['checklist_mismatch']} 次与真值不一致 —— 不一致比例 = {ratio*100:.0f}%")
+        print("  （说明：模型自我认知会出错；若无服务端真值校验，这些错误会直接变成违规操作。）")
 
 
-def print_interception_example(se_results):
+def print_interception_example(exp_results):
     """找一例：实验组模型自报可退(expected_refundable=True)，但数据库真值不可退，被代码拦截。"""
-    for r in se_results:
+    for r in exp_results:
         for rec in r["checklist_records"]:
             if rec["expected_refundable"] is True and rec["actual_refundable"] is False:
                 print(f"\n{'*'*72}\n* 代码化校验拦截示例（{r['task_id']}）\n{'*'*72}")
@@ -134,29 +168,139 @@ def print_interception_example(se_results):
     return False
 
 
-def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--quick", action="store_true", help="只跑前 4 个 case")
+# ---------------------------------------------------------------------------
+# 离线自检：无需 API Key，直接演示"三层守卫"里的第三层——服务端代码化校验
+# ---------------------------------------------------------------------------
+def run_selftest(tasks) -> None:
+    print(f"{'='*72}\n离线自检（无需 API Key）：代码化退款政策 + 工具内真值校验\n"
+          f"服务端时钟 SERVER_NOW = {SERVER_NOW.isoformat()}\n{'='*72}")
+    for task in tasks:
+        r = task.reservation
+        truth, reason = is_refundable(r, SERVER_NOW)
+        print(f"\n[{task.task_id}] 舱位={r.cabin} 下单={r.booked_at.isoformat()} 航班状态={r.flight_status}")
+        print(f"  政策真值 is_refundable -> refundable={truth}, reason={reason}")
+
+        # 控制组"天真工具"：无条件退款（代表没有代码化规则的系统）
+        env_naive = AirlineEnv(r)
+        naive = env_naive.cancel_reservation_naive(r.reservation_id)
+        print(f"  [控制组·天真工具] status={naive['status']} 退款={env_naive.res.refund_issued}"
+              f"  {'← 违规！政策不可退却退了' if (not truth and env_naive.res.refund_issued > 0) else ''}")
+
+        # 实验组"代码化工具"：故意灌入与真值相反的 expected_refundable，看是否被拦截
+        env_cod = AirlineEnv(r)
+        wrong_expected = not truth  # 模拟"模型自我认知出错"
+        cod = env_cod.cancel_reservation_codified(
+            r.reservation_id, expected_refundable=wrong_expected, expected_reason="airline_caused")
+        outcome = ("退款执行" if cod["status"] == "ok" else f"拒绝({cod.get('reason')})")
+        print(f"  [实验组·代码化] 模型自报expected_refundable={wrong_expected} -> status={cod['status']} "
+              f"[{outcome}] 退款={env_cod.res.refund_issued}")
+        rec = env_cod.checklist_records[-1] if env_cod.checklist_records else None
+        if rec:
+            print(f"      expected_* 校验：自报={rec['expected_refundable']} vs 真值={rec['actual_refundable']} "
+                  f"-> {'一致' if rec['match'] else '不一致（已记录告警）'}")
+    print(f"\n{'='*72}\n结论：无论模型自报什么，实验组一律以数据库真值裁决——"
+          f"不可退的一律被拦截，可退的才放行。\n{'='*72}")
+
+
+def select_tasks(patterns: list[str] | None, quick: bool):
+    tasks = TASKS
+    if patterns:
+        picked = [t for t in tasks if any(p.lower() in t.task_id.lower() for p in patterns)]
+        if not picked:
+            sys.exit(f"错误：--task {patterns} 未匹配任何 case。可用 task_id：\n  "
+                     + "\n  ".join(t.task_id for t in TASKS))
+        return picked
+    if quick:
+        return tasks[:4]
+    return tasks
+
+
+def build_parser() -> argparse.ArgumentParser:
+    ap = argparse.ArgumentParser(
+        prog="demo.py",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=(
+            "实验 5-3：小模型通过代码化业务规则，追平大模型裸跑的政策执行可靠性。\n"
+            "基于 τ-bench 航空客服取消/退款场景，做三方对照实验。"),
+        epilog=(
+            "示例：\n"
+            "  python demo.py                         # 默认：控制组 vs 实验组（均用小模型），跑全部 8 个 case\n"
+            "  python demo.py --quick -v              # 只跑前 4 个 case，并打印每步工具调用\n"
+            "  python demo.py --task R009             # 只跑匹配 'R009' 的 case（核心拦截样例）\n"
+            "  python demo.py --big-model gpt-4o      # 加入第三臂：大模型裸跑基线，验证'小模型+规则≈大模型'\n"
+            "  python demo.py --mode codified         # 只跑实验组（with 代码化规则）\n"
+            "  python demo.py --mode control          # 只跑控制组（without 代码化规则）\n"
+            "  python demo.py --small-model qwen3-4b --output result.json   # 指定小模型并保存结果\n"
+            "  python demo.py --selftest              # 离线演示代码化校验逻辑（无需 API Key）\n"),
+    )
+    ap.add_argument("--mode", choices=["control", "codified", "both"], default="both",
+                    help="跑哪一组：control=纯自然语言(without 代码化规则)，codified=三重保障(with 代码化规则)，"
+                         "both=两组都跑（默认）")
+    ap.add_argument("--task", "--tasks", dest="task", nargs="+", metavar="ID",
+                    help="只跑 task_id 匹配给定子串的 case（可多个，如 --task R003 R009）")
+    ap.add_argument("--small-model", default=MODEL, metavar="NAME",
+                    help=f"用作'小模型'的模型名（默认 {MODEL}，也可用环境变量 MODEL 覆盖）")
+    ap.add_argument("--big-model", default=os.environ.get("BIG_MODEL"), metavar="NAME",
+                    help="用作'大模型基线'的模型名（可选；给定后加跑第三臂：大模型裸跑纯自然语言）")
+    ap.add_argument("--quick", action="store_true", help="只跑前 4 个 case（省钱快看）")
     ap.add_argument("-v", "--verbose", action="store_true", help="打印每步工具调用")
-    args = ap.parse_args()
+    ap.add_argument("--output", metavar="PATH", help="把逐 case 结果与汇总指标写入 JSON 文件")
+    ap.add_argument("--selftest", action="store_true",
+                    help="离线自检：无需 API Key，直接演示代码化退款政策与工具内真值校验")
+    return ap
+
+
+def main():
+    args = build_parser().parse_args()
+
+    tasks = select_tasks(args.task, args.quick)
+
+    # 离线自检：不需要 API Key，先处理
+    if args.selftest:
+        run_selftest(tasks)
+        return
 
     if not os.environ.get("OPENAI_API_KEY"):
-        sys.exit("错误：未设置 OPENAI_API_KEY，请复制 env.example 为 .env 并填入，或直接 export。")
+        sys.exit("错误：未设置 OPENAI_API_KEY，请复制 env.example 为 .env 并填入，或直接 export。"
+                 "\n（提示：想离线看代码化校验逻辑，可跑 `python demo.py --selftest`，无需 Key。）")
 
-    tasks = TASKS[:4] if args.quick else TASKS
+    arms = build_arms(args.small_model, args.big_model, args.mode)
+    if not arms:
+        sys.exit("错误：没有可运行的对照臂，请检查 --mode / --big-model 组合。")
+
     print(f"实验 5-3：小模型通过代码化知识提升执行规则的准确性")
     print(f"共 {len(tasks)} 个 case（可退 {sum(t.expect_refundable for t in tasks)} / "
-          f"不可退 {sum(not t.expect_refundable for t in tasks)}）")
+          f"不可退 {sum(not t.expect_refundable for t in tasks)}），{len(arms)} 个对照臂："
+          + "、".join(f"{a['label']}({a['model']})" for a in arms))
 
-    control = run_group("control", tasks, args.verbose)
-    experiment = run_group("codified", tasks, args.verbose)
+    arm_results = [run_arm(arm, tasks, args.verbose) for arm in arms]
+    summaries = [summarize(res) for res in arm_results]
 
-    sc, se = summarize(control), summarize(experiment)
-    print_comparison(sc, se)
-    ok = print_interception_example(experiment)
-    if not ok:
-        print("\n（本次运行实验组未出现 expected=可退/真值=不可退 的拦截样例；"
-              "可重跑或调高温度观察。）")
+    print_comparison(arms, summaries)
+
+    # 拦截样例（取第一个实验组臂）
+    for arm, res in zip(arms, arm_results):
+        if arm["mode"] == "codified":
+            if not print_interception_example(res):
+                print("\n（本次运行实验组未出现 expected=可退/真值=不可退 的拦截样例；"
+                      "可重跑或调高温度观察。）")
+            break
+
+    if args.output:
+        payload = {
+            "config": {
+                "small_model": args.small_model, "big_model": args.big_model,
+                "mode": args.mode, "task_ids": [t.task_id for t in tasks],
+            },
+            "arms": [
+                {**{k: arm[k] for k in ("key", "mode", "model", "label", "role")},
+                 "summary": summ, "results": res}
+                for arm, summ, res in zip(arms, summaries, arm_results)
+            ],
+        }
+        with open(args.output, "w", encoding="utf-8") as f:
+            json.dump(payload, f, ensure_ascii=False, indent=2)
+        print(f"\n结果已写入 {args.output}")
 
 
 if __name__ == "__main__":

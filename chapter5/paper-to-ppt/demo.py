@@ -13,27 +13,30 @@
      python demo.py --help     # 查看全部参数
      python demo.py --mode dual --max-rounds 1   # 快速：只跑双 Agent、只出首版
      python demo.py --smoke     # 仅验证 Slidev 渲染链路，不调用任何 LLM
+     python demo.py --dry-run   # 离线走通提议者-审核者循环（真实渲染 + 脚本化改稿）
 依赖：Node/Slidev（渲染）、OPENAI_API_KEY（gpt-4o 视觉 + 文本）。
 """
 import argparse
 import json
 import os
+import re
 import sys
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
+import agents  # noqa: E402  —— 用模块名引用 TEXT_MODEL/VISION_MODEL，便于 CLI 覆盖
 from agents import (  # noqa: E402
     Proposer, Reviewer, SelfReviewAgent, TokenMeter, independent_judge,
-    TEXT_MODEL, VISION_MODEL,
 )
 from make_figures import generate_all  # noqa: E402
 from renderer import render_slides  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PAPER_PATH = os.path.join(HERE, "paper", "sample_paper.md")
-OUT_DIR = os.path.join(HERE, "output")
+DEFAULT_PAPER_PATH = os.path.join(HERE, "paper", "sample_paper.md")
+DEFAULT_OUT_DIR = os.path.join(HERE, "output")
+OUT_DIR = DEFAULT_OUT_DIR  # 可被 --out-dir 覆盖（main 内 global 赋值）
 MAX_ROUNDS = 3  # 每种方案的最大迭代轮数（首轮 + 最多 2 轮修订）
 
 
@@ -158,6 +161,132 @@ def smoke_test():
     print("Slidev 渲染链路可用。")
 
 
+# --------------------------------------------------------------------------- #
+# 离线 dry-run：不调用任何 LLM，走通提议者-审核者循环的**结构**。
+#   - Proposer 的两版稿件是脚本化的（拥挤初稿 → 拆页修订稿），而非 LLM 生成；
+#   - 渲染是**真实**的（真的调 Slidev 导出 PNG）；
+#   - Reviewer 用**确定性启发式规则**（按每页文字量判定 overcrowded），
+#     明确不是 Vision LLM——仅用于离线演示“生成→渲染→审查→修订”的闭环。
+# 真实的 Vision 审查请用 `python demo.py`（需 OPENAI_API_KEY）。
+# --------------------------------------------------------------------------- #
+def _split_paragraphs(paper_md: str) -> list[str]:
+    """按空行切出正文段落，剔除标题行与表格/图片，供脚本化排版使用。"""
+    paras = []
+    for block in re.split(r"\n\s*\n", paper_md):
+        block = block.strip()
+        if not block or block.startswith("#") or block.startswith("|"):
+            continue
+        paras.append(re.sub(r"\s+", " ", block))
+    return paras
+
+
+def _paper_title(paper_md: str) -> str:
+    m = re.search(r"^#\s+(.+)$", paper_md, re.MULTILINE)
+    return m.group(1).strip() if m else "论文演示"
+
+
+def _dry_first_draft(paper_md: str, figures: dict) -> str:
+    """脚本化“拥挤初稿”：把整篇论文压进约 4 页，每页塞多段原文（必然溢出）。"""
+    title = _paper_title(paper_md)
+    paras = _split_paragraphs(paper_md) or ["（论文正文为空）"]
+    fig_names = list(figures.keys())
+    # 把段落尽量塞进 3 张内容页
+    groups, per = [], max(1, (len(paras) + 2) // 3)
+    for i in range(0, len(paras), per):
+        groups.append(paras[i:i + per])
+    pages = [f"---\ntheme: default\n---\n\n# {title}\n\n自动生成演示（离线 dry-run 初稿）"]
+    for gi, g in enumerate(groups[:3]):
+        body = "\n\n".join(g)
+        img = f"\n\n![]({fig_names[gi]})" if gi < len(fig_names) else ""
+        pages.append(f"# 第 {gi + 1} 部分\n\n{body}{img}")
+    return "\n\n---\n\n".join(pages) + "\n"
+
+
+def _dry_revised(paper_md: str, figures: dict) -> str:
+    """脚本化“修订稿”：一段一页、要点化，图表单独成页——明显更宽松，可通过启发式。"""
+    title = _paper_title(paper_md)
+    paras = _split_paragraphs(paper_md) or ["（论文正文为空）"]
+    fig_names = list(figures.keys())
+    pages = [f"---\ntheme: default\n---\n\n# {title}\n\n自动生成演示（离线 dry-run 修订稿）"]
+    for i, para in enumerate(paras):
+        # 每页只放一段，且截断到约 220 字，模拟“精简成要点”
+        text = para if len(para) <= 220 else para[:210].rstrip() + "……"
+        pages.append(f"# 要点 {i + 1}\n\n{text}")
+    for name in fig_names:  # 图表各自单独成页，尺寸受控
+        pages.append(f"# 图表\n\n<img src=\"{name}\" class=\"h-80 mx-auto\" />")
+    return "\n\n---\n\n".join(pages) + "\n"
+
+
+def _heuristic_review(slides_md: str) -> dict:
+    """确定性启发式（非 Vision LLM）：按每页正文字符数判定 overcrowded。"""
+    parts = re.split(r"(?m)^---\s*$", slides_md)
+    pages, page_no = [], 0
+    for part in parts:
+        s = part.strip()
+        if not s or s.startswith("theme:") or "theme:" in s.split("\n")[0]:
+            continue
+        pages.append(s)
+    issues = []
+    for idx, page in enumerate(pages, 1):
+        text = re.sub(r"!\[.*?\]\(.*?\)|<img[^>]*>", "", page)  # 不计图片
+        n = len(re.sub(r"\s+", "", text))
+        if n > 500:
+            issues.append({"page": idx, "issue_type": "overcrowded", "severity": "high",
+                           "suggestion": f"该页正文约 {n} 字，严重溢出，建议拆成多页并精简为要点。"})
+        elif n > 300:
+            issues.append({"page": idx, "issue_type": "overcrowded", "severity": "medium",
+                           "suggestion": f"该页正文约 {n} 字，偏挤，建议拆页或删减。"})
+    blocking = [i for i in issues if i["severity"] in ("high", "medium")]
+    score = max(0, 100 - 15 * len(blocking) - 3 * (len(issues) - len(blocking)))
+    return {"overall_score": score, "pass": not blocking, "issues": issues,
+            "_reviewer": "heuristic (offline, NOT a Vision LLM)"}
+
+
+def dry_run(paper_path: str):
+    """离线走通提议者-审核者循环：真实渲染 + 脚本化改稿 + 启发式审查。"""
+    banner("Dry-run：离线演示提议者-审核者循环（真实渲染，脚本化改稿，启发式审查）")
+    if not os.path.exists(paper_path):
+        print(f"找不到论文文件：{paper_path}")
+        sys.exit(1)
+    with open(paper_path, encoding="utf-8") as f:
+        paper_md = f.read()
+    figures = generate_all()
+    print(f"论文：{paper_path}（{len(paper_md)} 字符）；已复现图表：{', '.join(figures)}")
+    print("注意：本模式不调用任何 LLM。Reviewer 由确定性启发式规则扮演（非 Vision LLM），")
+    print("      仅用于离线展示“生成→渲染→审查→修订”的闭环；真实 Vision 审查请用 `python demo.py`。")
+
+    stages = [
+        ("拥挤初稿", _dry_first_draft(paper_md, figures)),
+        ("拆页修订稿", _dry_revised(paper_md, figures)),
+    ]
+    last_review = None
+    for rnd, (label, slides) in enumerate(stages, 1):
+        n_pages = slides.count("\n---\n")  # 页分隔符数量≈页数
+        print(f"\n[dry-run] 第 {rnd} 轮：Proposer 产出 slides.md（{label}，约 {n_pages} 页）")
+        save_text(f"dryrun_round{rnd}_slides.md", slides)
+        pngs = render_slides(slides, f"dryrun_round{rnd}")
+        print(f"  渲染出 {len(pngs)} 页 PNG，例如：{pngs[0]}")
+        review = _heuristic_review(slides)
+        print(f"  Reviewer(启发式)审查：{summarize_review(review)}")
+        print("  Reviewer 结构化建议 JSON：")
+        print(_indent(json.dumps(review, ensure_ascii=False, indent=2), 4))
+        save_text(f"dryrun_round{rnd}_review.json",
+                  json.dumps(review, ensure_ascii=False, indent=2))
+        last_review = review
+        if review["pass"]:
+            print("  ✓ Reviewer 判定达标（无 high/medium 问题），闭环结束。")
+            break
+        if rnd < len(stages):
+            print("  → Proposer 接收结构化文字反馈并修订（拆页、精简；此处为脚本化改稿）")
+
+    banner("Dry-run 小结")
+    print(f"闭环演示完成：初稿被判定拥挤 → 修订稿 pass={last_review['pass']}"
+          f"（启发式打分 {last_review['overall_score']}）。")
+    print(f"真实渲染 PNG：slidev_workspace/exports/dryrun_round*/")
+    print(f"脚本化 slides.md 与审查 JSON：{OUT_DIR}/dryrun_round*")
+    print("真实的 Vision 审查循环（gpt-4o 看像素）请运行：python demo.py --mode dual --max-rounds 3")
+
+
 def parse_args(argv=None):
     p = argparse.ArgumentParser(
         prog="demo.py",
@@ -168,17 +297,36 @@ def parse_args(argv=None):
             "  python demo.py                          # 完整对比：两种方案 + 独立评委 + token 对比\n"
             "  python demo.py --mode dual              # 只跑双 Agent（省一半时间/费用）\n"
             "  python demo.py --max-rounds 1           # 每种方案只出首版（最快的真实 LLM 冒烟）\n"
+            "  python demo.py --paper my.md --out-dir run1   # 换论文、换输出目录\n"
+            "  python demo.py --vision-model gpt-4o-mini      # 覆盖视觉模型\n"
+            "  python demo.py --dry-run                # 离线走通提议者-审核者循环，不调用任何 LLM\n"
             "  python demo.py --smoke                  # 仅验证 Slidev 渲染，不调用任何 LLM\n\n"
-            "模型/供应商通过环境变量配置（见 env.example）：\n"
-            "  OPENAI_API_KEY / OPENAI_BASE_URL / TEXT_MODEL / VISION_MODEL"
+            "模型/供应商也可通过环境变量配置（见 env.example）；命令行 --text-model /\n"
+            "--vision-model 优先级更高：OPENAI_API_KEY / OPENAI_BASE_URL / TEXT_MODEL / VISION_MODEL"
         ),
     )
+    p.add_argument("--paper", metavar="PATH", default=DEFAULT_PAPER_PATH,
+                   help="输入论文的 Markdown 路径（默认 paper/sample_paper.md）。"
+                        "替换为你自己的论文即可；保留章节结构即可被 Proposer 解析。")
+    p.add_argument("--out-dir", metavar="DIR", default=DEFAULT_OUT_DIR,
+                   help="产物输出目录：各轮 slides.md / review.json / comparison_summary.json "
+                        "（默认 output/）。渲染 PNG 始终位于 slidev_workspace/exports/。")
+    p.add_argument("--text-model", metavar="NAME", default=None,
+                   help="Proposer / 单 Agent 文本部分用的模型，覆盖 TEXT_MODEL 环境变量"
+                        f"（默认 {agents.TEXT_MODEL}）。")
+    p.add_argument("--vision-model", metavar="NAME", default=None,
+                   help="Reviewer / 独立评委看图用的模型，必须支持图像输入，覆盖 VISION_MODEL "
+                        f"环境变量（默认 {agents.VISION_MODEL}）。")
     p.add_argument("--mode", choices=["both", "dual", "single"], default="both",
                    help="运行哪种方案：both=两种都跑并对比（默认）；dual=仅提议者-审核者；"
                         "single=仅单 Agent 自审。只跑一种可显著省时省钱。")
     p.add_argument("--max-rounds", type=int, default=MAX_ROUNDS, metavar="N",
                    help=f"每种方案的最大迭代轮数（默认 {MAX_ROUNDS}）。设为 1 即只出首版、"
                         "不修订，是最快的真实运行冒烟。")
+    p.add_argument("--dry-run", action="store_true",
+                   help="离线演示提议者-审核者循环：真实渲染两版脚本化 slides.md（拥挤初稿→"
+                        "拆页修订稿），用启发式规则（非 Vision LLM）扮演 Reviewer，展示"
+                        "生成→渲染→审查→修订的闭环结构。不调用任何 LLM，无需 API Key。")
     p.add_argument("--smoke", action="store_true",
                    help="仅验证 Slidev 渲染链路（渲染一个两页 deck），不调用任何 LLM，无需 API Key。")
     return p.parse_args(argv)
@@ -186,7 +334,7 @@ def parse_args(argv=None):
 
 def _save_partial_summary(dual, dual_final, single, single_final):
     """单方案运行（--mode dual/single）时，落盘该方案自身的质量与 token 结果。"""
-    summary = {"models": {"text": TEXT_MODEL, "vision": VISION_MODEL}}
+    summary = {"models": {"text": agents.TEXT_MODEL, "vision": agents.VISION_MODEL}}
     if dual:
         pm, rm = dual["proposer_meter"], dual["reviewer_meter"]
         summary["dual_agent"] = {
@@ -208,24 +356,40 @@ def _save_partial_summary(dual, dual_final, single, single_final):
 
 
 def main(argv=None):
+    global OUT_DIR
     args = parse_args(argv)
+
+    # 输出目录（--out-dir）：所有 save_text 都写到这里
+    OUT_DIR = os.path.abspath(args.out_dir)
+    # 模型覆盖（--text-model / --vision-model 优先于环境变量）
+    if args.text_model:
+        agents.TEXT_MODEL = args.text_model
+    if args.vision_model:
+        agents.VISION_MODEL = args.vision_model
 
     if args.smoke:
         smoke_test()
         return
+    if args.dry_run:
+        dry_run(args.paper)
+        return
     if args.max_rounds < 1:
         print("--max-rounds 至少为 1")
+        sys.exit(1)
+    if not os.path.exists(args.paper):
+        print(f"找不到论文文件：{args.paper}（用 --paper 指定，或参考默认 paper/sample_paper.md）")
         sys.exit(1)
     if not os.environ.get("OPENAI_API_KEY"):
         print("请先设置 OPENAI_API_KEY（可参考 env.example）")
         sys.exit(1)
 
     banner("准备：论文 + 程序化复现的图表")
-    with open(PAPER_PATH, encoding="utf-8") as f:
+    with open(args.paper, encoding="utf-8") as f:
         paper_md = f.read()
     figures = generate_all()
-    print(f"论文：{PAPER_PATH}（{len(paper_md)} 字符）")
-    print(f"文本模型：{TEXT_MODEL}   视觉模型：{VISION_MODEL}")
+    print(f"论文：{args.paper}（{len(paper_md)} 字符）")
+    print(f"输出目录：{OUT_DIR}")
+    print(f"文本模型：{agents.TEXT_MODEL}   视觉模型：{agents.VISION_MODEL}")
     print(f"运行模式：{args.mode}   最大轮数：{args.max_rounds}")
     print("已生成图表：")
     for k, v in figures.items():
@@ -294,7 +458,7 @@ def main(argv=None):
 
     # 汇总落盘
     summary = {
-        "models": {"text": TEXT_MODEL, "vision": VISION_MODEL},
+        "models": {"text": agents.TEXT_MODEL, "vision": agents.VISION_MODEL},
         "dual_agent": {
             "iteration_scores": scores,
             "final_quality": dual_final,

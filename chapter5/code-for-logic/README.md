@@ -7,10 +7,13 @@
 转化为形式化的**约束满足问题(CSP)**——识别变量(每个岛民是骑士还是无赖)、定义约束
 (“骑士说真话、无赖说假话”)，再调用求解器搜索满足所有约束的解。
 
-我们用一组 12 道 K&K 谜题(2~5 人，均带唯一真值解)对比两种模式：
+我们用一组 12 道 K&K 谜题(2~5 人，均带唯一真值解)对比三种模式：
 
 - **纯思考(pure)**：LLM 只用自然语言链式推理，直接给答案；
-- **代码辅助(code)**：LLM 用 `run_python` 工具写约束模型并调求解器，再据结果作答。
+- **代码辅助(code)**：LLM 用 `run_python` 工具写约束模型并调求解器，再据结果作答；
+- **约束求解(solver)**：**离线基线**，直接用 `python-constraint` 求解结构化陈述，
+  不需要任何 API/网络——它是确定性求解器路径本身，理论上 100% 正确，用来验证
+  「把谜题翻译成约束程序并求解」这一核心论点(见下方真实运行结果)。
 
 ## 核心思想：为什么代码辅助更强
 
@@ -28,10 +31,11 @@ X 是骑士(True)  <=>  X 说的那句话为真
 
 | 文件 | 作用 |
 | --- | --- |
-| `demo.py` | 主程序：跑两种模式的对照实验，打印准确率对比表 |
+| `demo.py` | 主程序：跑 纯思考/代码辅助/约束求解 的对照实验，打印准确率对比表 |
+| `csp_solver.py` | 离线约束求解器：结构化陈述 DSL + `python-constraint` 求解(供 demo 的 solver 模式与 build_puzzles 校验共用) |
 | `sandbox.py` | 极简 Code Interpreter：子进程沙箱执行模型生成的 Python(预装 python-constraint) |
-| `puzzles.json` | 12 道谜题的题面 + 唯一真值解(给 Agent 的只有题面) |
-| `build_puzzles.py` | 生成/校验谜题的脚本：暴力枚举验证每题“解唯一”，导出 `puzzles.json` |
+| `puzzles.json` | 12 道谜题的题面 + 结构化陈述 + 唯一真值解(给 LLM 的只有题面) |
+| `build_puzzles.py` | 生成/校验谜题：用 `python-constraint` 求解并断言每题“解唯一”，可导出精选题或随机生成 |
 | `requirements.txt` | 依赖(openai + python-constraint) |
 | `env.example` | 环境变量样例 |
 | `last_run.json` | 每次运行后自动保存的逐题完整记录(含模型生成的代码)，便于复盘 |
@@ -40,18 +44,68 @@ X 是骑士(True)  <=>  X 说的那句话为真
 
 ```bash
 pip install -r requirements.txt
+```
 
+### 1) 离线约束求解基线（不需要 API Key，推荐先跑）
+
+```bash
+python demo.py --mode solver          # 用 python-constraint 离线求解全部 12 题
+python demo.py --mode solver --min-people 4   # 只跑 >=4 人的难题
+```
+
+这条路径完全离线、确定性，直接演示「谜题→约束程序→求解」的核心论点，准确率 100%。
+
+### 2) LLM 对照实验（需要 OPENAI_API_KEY）
+
+```bash
 cp env.example .env        # 然后编辑 .env 填入 OPENAI_API_KEY
 # 或直接 export OPENAI_API_KEY=sk-...
 
-python demo.py             # 跑全部 12 题，打印准确率对比表
+python demo.py             # 默认 both：纯思考 vs 代码辅助，全部 12 题
+python demo.py --mode pure # 只跑纯思考基线
 python demo.py --limit 4   # 只跑前 4 题(省钱冒烟测试)
+python demo.py --max-people 3        # 只跑 <=3 人的谜题(按难度筛选)
 python demo.py --model gpt-4o-mini   # 指定模型(默认 gpt-4o-mini)
+python demo.py --puzzles my.json --output run.json   # 换数据集/输出路径
 ```
 
-`sandbox.py` 也可单独运行做自测：`python sandbox.py` 会用 python-constraint 求解一道最简谜题。
+完整参数见 `python demo.py --help`（中文说明）。
 
-## 真实运行结果（gpt-4o-mini，12 题）
+### 3) 生成/扩充谜题数据集
+
+```bash
+python build_puzzles.py                     # 导出内置 12 道精选题(默认)
+python build_puzzles.py --generate 20 --min-people 3 --max-people 5 --seed 7
+python build_puzzles.py --generate 20 --output my.json
+```
+
+随机生成器会用 `python-constraint` 求解每个候选谜题，只保留「解唯一」的题目。
+
+`sandbox.py` / `csp_solver.py` 也可单独运行做自测：
+`python sandbox.py`、`python csp_solver.py` 都会用 python-constraint 求解一道最简谜题。
+
+## 真实运行结果（一）：离线约束求解基线（`--mode solver`，无需 API）
+
+`python demo.py --mode solver` 的真实输出（12 道精选题，完全离线、确定性）：
+
+```
+== 约束求解(solver，离线) ==
+  [solver] kk01 (2人) ✓  解数=1  预测={'A': 'knight', 'B': 'knave'}
+  [solver] kk05 (3人) ✓  解数=1  预测={'A': 'knave', 'B': 'knave', 'C': 'knight'}
+  [solver] kk11 (5人) ✓  解数=1  预测={'A': 'knight', 'B': 'knight', 'C': 'knave', 'D': 'knave', 'E': 'knight'}
+  ...（其余题略）
+------------------------------------------------------------
+准确率            100.0%
+============================================================
+约束求解   准确率: 100.0%  (12/12)
+```
+
+这条路径把每题的结构化陈述翻译成 `python-constraint` 约束并穷举求解，12/12 全对——
+它直接证明了「谜题→约束程序→求解」的确定性；LLM 只要把谜题正确翻译成同样的约束，
+就能拿到同样 100% 的结果（下节）。随机生成的谜题（`build_puzzles.py --generate`）经
+solver 复核同样 100% 解出且与生成时的唯一解一致。
+
+## 真实运行结果（二）：LLM 对照实验（gpt-4o-mini，12 题）
 
 ```
 准确率对比表
@@ -115,5 +169,5 @@ for s in p.getSolutions():
 - **API Key**：从环境变量或 `.env` 读 `OPENAI_API_KEY`；用 `MODEL` 可换模型。
 - **沙箱**：`sandbox.py` 用子进程 + 超时执行代码，属教学用极简沙箱；生产环境应换成
   容器/gVisor 等更强隔离。
-- **谜题可靠性**：`build_puzzles.py` 会对每题暴力枚举 2^n 种赋值，断言“解唯一”后才写出，
-  确保真值解无歧义；想自己加题就改这个脚本并重跑。
+- **谜题可靠性**：`build_puzzles.py` 用 `python-constraint` 求解每题(内置精选题或随机生成)，
+  断言“解唯一”后才写出，确保真值解无歧义；想自己加题就改 `CURATED` 或用 `--generate`。

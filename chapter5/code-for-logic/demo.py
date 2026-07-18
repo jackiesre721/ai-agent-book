@@ -3,20 +3,29 @@
 """
 实验 5-2：用代码生成工具提升逻辑思考能力
 
-对比同一个 LLM 在两种模式下求解「骑士与无赖」(Knights & Knaves) 谜题的准确率：
+对比在三种模式下求解「骑士与无赖」(Knights & Knaves) 谜题的准确率：
 
-  1) 纯思考(pure)      —— 仅靠自然语言链式推理直接给出答案；
-  2) 代码辅助(code)    —— 配备 Code Interpreter(预装 python-constraint)，
-                          把谜题形式化为约束满足问题(CSP)，调用求解器搜索答案。
+  1) 纯思考(pure)      —— LLM 仅靠自然语言链式推理直接给出答案；
+  2) 代码辅助(code)    —— LLM 配备 Code Interpreter(预装 python-constraint)，
+                          把谜题形式化为约束满足问题(CSP)，调用求解器搜索答案；
+  3) 约束求解(solver)  —— 【离线，无需 API】直接用 python-constraint 求解结构化
+                          陈述，作为确定性基线(理论上 100% 正确)。
 
 结论预期：约束求解把逻辑推理外包给确定性求解器，准确率应达 90%+，
 且显著高于纯思考模式(纯思考在多人、含计数/自指的谜题上容易出错)。
 
 用法：
+    # 离线约束求解基线(不花钱、不联网，演示核心论点)：
+    python demo.py --mode solver
+
+    # LLM 对照实验(需要 OPENAI_API_KEY)：
     export OPENAI_API_KEY=sk-...
-    python demo.py                 # 跑全部 12 题
-    python demo.py --limit 4       # 只跑前 4 题(省钱冒烟测试)
-    python demo.py --model gpt-4o-mini
+    python demo.py                       # 默认 both：跑 纯思考 vs 代码辅助 全部题目
+    python demo.py --mode pure           # 只跑纯思考
+    python demo.py --limit 4             # 只跑前 4 题(省钱冒烟测试)
+    python demo.py --max-people 3        # 只跑不超过 3 人的谜题(按难度筛选)
+    python demo.py --model gpt-4o-mini   # 指定模型
+    python demo.py --puzzles my.json     # 换一份谜题数据集
 """
 import argparse
 import json
@@ -24,8 +33,7 @@ import os
 import re
 import sys
 
-from openai import OpenAI
-
+from csp_solver import solve_labeled
 from sandbox import run_python
 
 # ---- 读取 .env(如果存在)。避免额外依赖，手写一个极简解析器。----
@@ -158,7 +166,7 @@ def call_model(client, system, user, use_tools):
 
 
 def run_mode(client, puzzles, mode):
-    """跑一种模式，返回逐题记录列表。"""
+    """跑一种 LLM 模式(pure/code)，返回逐题记录列表。"""
     system = CODE_SYSTEM if mode == "code" else PURE_SYSTEM
     records = []
     for p in puzzles:
@@ -169,74 +177,147 @@ def run_mode(client, puzzles, mode):
                             gold=p["solution"], correct=correct,
                             codes=codes, text=text))
         mark = "✓" if correct else "✗"
-        print(f"  [{mode:4}] {p['id']} ({p['num_people']}人) {mark}  "
+        print(f"  [{mode:6}] {p['id']} ({p['num_people']}人) {mark}  "
               f"预测={pred}")
     return records
 
 
-def main():
-    global MODEL
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--model", default=MODEL)
-    ap.add_argument("--limit", type=int, default=0, help="只跑前 N 题(0=全部)")
-    args = ap.parse_args()
-    MODEL = args.model
+def run_solver(puzzles):
+    """离线约束求解模式：直接用 python-constraint 求解结构化陈述，无需 LLM/API。"""
+    records = []
+    for p in puzzles:
+        struct = p.get("statements_struct")
+        if not struct:
+            sys.exit(f"错误：谜题 {p['id']} 缺少 statements_struct 字段，"
+                     "请用新版 build_puzzles.py 重新生成 puzzles.json。")
+        sols = solve_labeled(p["names"], struct)
+        pred = sols[0] if len(sols) == 1 else None
+        correct = pred == p["solution"]
+        records.append(dict(id=p["id"], num=p["num_people"], pred=pred,
+                            gold=p["solution"], correct=correct,
+                            codes=[], text="", num_solutions=len(sols)))
+        mark = "✓" if correct else "✗"
+        print(f"  [solver] {p['id']} ({p['num_people']}人) {mark}  "
+              f"解数={len(sols)}  预测={pred}")
+    return records
 
-    if not os.environ.get("OPENAI_API_KEY"):
-        sys.exit("错误：请先设置 OPENAI_API_KEY 环境变量(可写入 .env)。")
 
-    with open("puzzles.json", encoding="utf-8") as f:
-        puzzles = json.load(f)
-    if args.limit:
-        puzzles = puzzles[:args.limit]
+LABELS = {"pure": "纯思考", "code": "代码辅助", "solver": "约束求解"}
 
-    client = OpenAI()
-    print(f"模型：{MODEL}    题目数：{len(puzzles)}\n")
 
-    print("== 纯思考(pure) ==")
-    pure = run_mode(client, puzzles, "pure")
-    print("\n== 代码辅助(code) ==")
-    code = run_mode(client, puzzles, "code")
-
-    # ---- 准确率对比表 ----
-    pure_acc = sum(r["correct"] for r in pure) / len(pure)
-    code_acc = sum(r["correct"] for r in code) / len(code)
-
+def print_table(columns, puzzles):
+    """打印多列准确率对比表。columns = [(mode, records), ...]，顺序即列顺序。"""
+    accs = {m: sum(r["correct"] for r in recs) / len(recs) for m, recs in columns}
+    header = f"{'题号':<8}{'人数':<6}" + "".join(f"{LABELS[m]:<10}" for m, _ in columns)
     print("\n" + "=" * 60)
     print("准确率对比表")
     print("=" * 60)
-    print(f"{'题号':<8}{'人数':<6}{'纯思考':<10}{'代码辅助':<10}")
+    print(header)
     print("-" * 60)
-    for rp, rc in zip(pure, code):
-        print(f"{rp['id']:<8}{rp['num']:<6}"
-              f"{('✓' if rp['correct'] else '✗'):<10}"
-              f"{('✓' if rc['correct'] else '✗'):<10}")
+    n = len(puzzles)
+    for i in range(n):
+        row = f"{puzzles[i]['id']:<8}{puzzles[i]['num_people']:<6}"
+        for _, recs in columns:
+            row += f"{('✓' if recs[i]['correct'] else '✗'):<10}"
+        print(row)
     print("-" * 60)
-    print(f"{'准确率':<8}{'':<6}"
-          f"{pure_acc*100:>6.1f}%   {code_acc*100:>6.1f}%")
+    tail = f"{'准确率':<8}{'':<6}" + "".join(
+        f"{accs[m]*100:>6.1f}%   " for m, _ in columns)
+    print(tail)
     print("=" * 60)
-    print(f"\n纯思考   准确率: {pure_acc*100:.1f}%  "
-          f"({sum(r['correct'] for r in pure)}/{len(pure)})")
-    print(f"代码辅助 准确率: {code_acc*100:.1f}%  "
-          f"({sum(r['correct'] for r in code)}/{len(code)})")
-    print(f"提升: {(code_acc-pure_acc)*100:+.1f} 个百分点")
+    for m, recs in columns:
+        n_ok = sum(r["correct"] for r in recs)
+        print(f"{LABELS[m]:<6} 准确率: {accs[m]*100:5.1f}%  ({n_ok}/{len(recs)})")
+    # 若同时有 solver/code 与 pure，报告提升幅度
+    baseline = next((m for m in ("pure",) if m in accs), None)
+    best = next((m for m in ("solver", "code") if m in accs), None)
+    if baseline and best and best != baseline:
+        print(f"提升({LABELS[best]} - {LABELS[baseline]}): "
+              f"{(accs[best]-accs[baseline])*100:+.1f} 个百分点")
+
+
+def main():
+    global MODEL
+    ap = argparse.ArgumentParser(
+        description="实验 5-2：对比纯思考 / 代码辅助 / 约束求解 三种模式求解"
+                    "「骑士与无赖」逻辑谜题的准确率",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog=__doc__)
+    ap.add_argument("--mode", choices=["both", "pure", "code", "solver"],
+                    default="both",
+                    help="运行模式：both=纯思考+代码辅助(默认)；pure=仅纯思考；"
+                         "code=仅代码辅助；solver=离线约束求解基线(无需 API)")
+    ap.add_argument("--model", default=MODEL,
+                    help=f"LLM 模型名(默认 {MODEL}；solver 模式忽略)")
+    ap.add_argument("--limit", type=int, default=0,
+                    help="只跑前 N 题(0=全部)")
+    ap.add_argument("--min-people", type=int, default=0,
+                    help="只跑居民数 >= 该值的谜题(按难度筛选，0=不限)")
+    ap.add_argument("--max-people", type=int, default=0,
+                    help="只跑居民数 <= 该值的谜题(按难度筛选，0=不限)")
+    ap.add_argument("--puzzles", default="puzzles.json",
+                    help="谜题数据集路径(默认 puzzles.json)")
+    ap.add_argument("--output", default="last_run.json",
+                    help="逐题完整记录的输出路径(默认 last_run.json)")
+    args = ap.parse_args()
+    MODEL = args.model
+
+    with open(args.puzzles, encoding="utf-8") as f:
+        puzzles = json.load(f)
+    if args.min_people:
+        puzzles = [p for p in puzzles if p["num_people"] >= args.min_people]
+    if args.max_people:
+        puzzles = [p for p in puzzles if p["num_people"] <= args.max_people]
+    if args.limit:
+        puzzles = puzzles[:args.limit]
+    if not puzzles:
+        sys.exit("错误：筛选后没有任何谜题，请放宽 --min-people/--max-people/--limit。")
+
+    # solver 模式完全离线，不需要 API；其余模式需要 OPENAI_API_KEY。
+    llm_modes = {"both": ["pure", "code"], "pure": ["pure"],
+                 "code": ["code"], "solver": []}[args.mode]
+    results = {}
+
+    if args.mode == "solver":
+        print(f"离线约束求解基线    题目数：{len(puzzles)}\n")
+        print("== 约束求解(solver，离线) ==")
+        results["solver"] = run_solver(puzzles)
+    else:
+        if not os.environ.get("OPENAI_API_KEY"):
+            sys.exit("错误：pure/code/both 模式需要 OPENAI_API_KEY 环境变量"
+                     "(可写入 .env)。若只想看离线约束求解基线，请用 --mode solver。")
+        from openai import OpenAI  # 延迟导入：solver 模式无需安装/联网 openai
+        client = OpenAI()
+        print(f"模型：{MODEL}    题目数：{len(puzzles)}    模式：{args.mode}\n")
+        for m in llm_modes:
+            print(f"== {LABELS[m]}({m}) ==")
+            results[m] = run_mode(client, puzzles, m)
+            print()
+
+    # ---- 准确率对比表(按 pure -> code -> solver 的固定列序) ----
+    columns = [(m, results[m]) for m in ["pure", "code", "solver"] if m in results]
+    print_table(columns, puzzles)
 
     # ---- 展示一题的约束建模代码与求解结果 ----
-    sample = next((r for r in code if r["correct"] and r["codes"]), None)
-    if sample:
-        print("\n" + "=" * 60)
-        print(f"示例：{sample['id']} 的约束建模代码(模型生成)")
-        print("=" * 60)
-        print(sample["codes"][0])
-        print("-- 求解 & 最终答案 --")
-        print(f"预测={sample['pred']}  真值={sample['gold']}")
+    code_recs = results.get("code")
+    if code_recs:
+        sample = next((r for r in code_recs if r["correct"] and r["codes"]), None)
+        if sample:
+            print("\n" + "=" * 60)
+            print(f"示例：{sample['id']} 的约束建模代码(模型生成)")
+            print("=" * 60)
+            print(sample["codes"][0])
+            print("-- 求解 & 最终答案 --")
+            print(f"预测={sample['pred']}  真值={sample['gold']}")
 
     # 保存完整记录，便于复盘
-    with open("last_run.json", "w", encoding="utf-8") as f:
-        json.dump(dict(model=MODEL, pure=pure, code=code,
-                       pure_acc=pure_acc, code_acc=code_acc),
-                  f, ensure_ascii=False, indent=2)
-    print("\n完整逐题记录已保存到 last_run.json")
+    payload = dict(model=MODEL, mode=args.mode)
+    for m, recs in results.items():
+        payload[m] = recs
+        payload[f"{m}_acc"] = sum(r["correct"] for r in recs) / len(recs)
+    with open(args.output, "w", encoding="utf-8") as f:
+        json.dump(payload, f, ensure_ascii=False, indent=2)
+    print(f"\n完整逐题记录已保存到 {args.output}")
 
 
 if __name__ == "__main__":
