@@ -54,7 +54,11 @@ cp env.example .env
 
 Required environment variables:
 - `KIMI_API_KEY`: Your Kimi K3 API key
-- `MODEL_NAME`: Model name (default: kimi/k3)
+- `MODEL_NAME`: Model name (default: kimi-k3). This is the raw Moonshot model
+  id (e.g. `kimi-k3`, `kimi-k2.5`, `kimi-k2.6`) passed straight to the API — do
+  NOT use a `provider/model` slash form here; Mem0 is configured with the
+  `openai` provider pointed at Moonshot's `base_url`, so it forwards the string
+  verbatim and `kimi/k3` returns "Not found the model".
 - `MEMORY_BACKEND`: Storage backend (local/cloud)
 - `MAX_TOKENS`: Maximum token limit (default: 128000)
 

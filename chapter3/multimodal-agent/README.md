@@ -230,7 +230,7 @@ Demo CLI flags:
 
 1. **Google Gemini**: Required for PDF/Audio native processing
    - Get key at: https://makersuite.google.com/app/apikey
-   - Set: `GOOGLE_API_KEY`
+   - Set: `GOOGLE_API_KEY` (or `GEMINI_API_KEY` — both are read)
 
 2. **OpenAI**: Required for GPT models and Whisper
    - Get key at: https://platform.openai.com/api-keys
@@ -238,7 +238,7 @@ Demo CLI flags:
 
 3. **Doubao**: Required for Doubao model
    - Get key at: https://console.volcengine.com/
-   - Set: `DOUBAO_API_KEY`
+   - Set: `DOUBAO_API_KEY` (or `ARK_API_KEY` — both are read)
 
 ### File Size Limits
 - PDF: 20MB

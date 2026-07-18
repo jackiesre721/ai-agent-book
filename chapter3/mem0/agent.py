@@ -145,13 +145,24 @@ class Mem0Agent:
         
     def _init_memory(self) -> None:
         """Initialize Mem0 memory system."""
+        # Mem0 runs its own LLM calls for fact extraction and the
+        # ADD/UPDATE/DELETE decision. Left unset, mem0 defaults to
+        # max_tokens=2000 / temperature=0.1, which is unsafe for reasoning
+        # models (Kimi K3 wants temperature=1 and enough room for its thinking
+        # tokens). Pin both explicitly so the pipeline is reasoning-safe.
         mem0_config = {
             "llm": {
                 "provider": "openai",
                 "config": {
                     "api_key": self.config.kimi.api_key,
-                    "base_url": self.config.kimi.api_base,
-                    "model": self.config.kimi.model_name
+                    # mem0 >=1.0 names this field openai_base_url (not base_url);
+                    # it points the OpenAI-compatible client at Moonshot.
+                    "openai_base_url": self.config.kimi.api_base,
+                    "model": self.config.kimi.model_name,
+                    "temperature": _reasoning_safe_temperature(
+                        self.config.kimi.model_name, self.config.kimi.temperature
+                    ),
+                    "max_tokens": max(self.config.kimi.max_tokens, 2048),
                 }
             },
             "vector_store": self.config.mem0.vector_store_config,

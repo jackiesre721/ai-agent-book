@@ -35,10 +35,12 @@ class Config:
     """Main configuration class for multimodal agent"""
     
     def __init__(self):
-        # Load API keys from environment
-        self.gemini_api_key = os.getenv("GOOGLE_API_KEY", "")
+        # Load API keys from environment.
+        # 兼容常见别名：Gemini 官方 SDK 用 GEMINI_API_KEY，旧文档用 GOOGLE_API_KEY，两者都接受；
+        # 豆包/方舟(Ark)的 Key 环境变量常见为 DOUBAO_API_KEY 或 ARK_API_KEY。
+        self.gemini_api_key = os.getenv("GOOGLE_API_KEY") or os.getenv("GEMINI_API_KEY", "")
         self.openai_api_key = os.getenv("OPENAI_API_KEY", "")
-        self.doubao_api_key = os.getenv("DOUBAO_API_KEY", "")
+        self.doubao_api_key = os.getenv("DOUBAO_API_KEY") or os.getenv("ARK_API_KEY", "")
         
         # Model configurations
         self.models = {

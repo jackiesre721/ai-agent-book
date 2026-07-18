@@ -316,7 +316,7 @@ CLI_EPILOG = """\
   python main.py --mode memory --op search --query "这个用户住在哪里？" --user-id u1
   python main.py --mode memory --op get-all --user-id u1 --output mem.json
   python main.py --mode batch  --input conversations.json --output results.json
-  python main.py --mode benchmark --model kimi/k3
+  python main.py --mode benchmark --model kimi-k3
 
 说明：memory / demo / interactive / batch / benchmark 均需要可用的 LLM API（KIMI_API_KEY）
 及向量存储；Mem0 的记忆提取与检索依赖在线模型调用。
@@ -352,7 +352,7 @@ async def main():
     parser.add_argument("--agent-id", type=str, default="agent_001",
                         help="智能体 ID（默认 agent_001）")
     parser.add_argument("--model", type=str,
-                        help="覆盖 MODEL_NAME，指定对话模型（如 kimi/k3）")
+                        help="覆盖 MODEL_NAME，指定对话模型（如 kimi-k3）")
     parser.add_argument("--input", type=str, help="batch 模式的输入 JSON 文件")
     parser.add_argument("--output", type=str,
                         help="将结果写入的 JSON 文件（memory / batch 模式）")

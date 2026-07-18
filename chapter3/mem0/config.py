@@ -23,7 +23,7 @@ class KimiConfig:
     """Configuration for Kimi K3 model."""
     
     api_key: str = field(default_factory=lambda: os.getenv("KIMI_API_KEY", ""))
-    model_name: str = field(default_factory=lambda: os.getenv("MODEL_NAME", "kimi/k3"))
+    model_name: str = field(default_factory=lambda: os.getenv("MODEL_NAME", "kimi-k3"))
     max_tokens: int = field(default_factory=lambda: int(os.getenv("MAX_TOKENS", "128000")))
     temperature: float = field(default_factory=lambda: float(os.getenv("TEMPERATURE", "0.7")))
     api_base: str = field(default_factory=lambda: os.getenv("KIMI_API_BASE", "https://api.moonshot.cn/v1"))
@@ -52,12 +52,16 @@ class Mem0Config:
     def __post_init__(self):
         """Initialize vector store configuration based on backend."""
         if self.backend == "local":
+            # NB: mem0 >=1.0 validates the chroma config against a fixed field
+            # set (collection_name/path/host/port/api_key/tenant/client). The
+            # embedding model belongs to the top-level "embedder" block (set in
+            # agent.py), NOT here — passing embedding_function raises a
+            # MemoryConfig validation error.
             self.vector_store_config = {
                 "provider": "chroma",
                 "config": {
                     "collection_name": self.collection_name,
                     "path": "./data/chroma_db",
-                    "embedding_function": self.embedding_model
                 }
             }
         elif self.backend == "cloud":

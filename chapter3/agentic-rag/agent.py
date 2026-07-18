@@ -11,12 +11,27 @@ from config import Config, LLMConfig, AgentConfig
 from tools import KnowledgeBaseTools, get_tool_definitions
 
 
+def _is_reasoning_model(model) -> bool:
+    """Whether the model is a reasoning model (Kimi K3, GPT-5, ...)."""
+    m = str(model or "").lower().replace("/", "-")
+    return "kimi-k3" in m or "gpt-5" in m
+
+
 def _reasoning_safe_temperature(model, requested=1.0):
     """Reasoning models (Kimi K3, GPT-5, ...) only accept temperature=1.
     Return 1 for those; otherwise the requested value so non-reasoning
     providers (Doubao, DeepSeek, older Moonshot) are unchanged."""
-    m = str(model or "").lower().replace("/", "-")
-    return 1 if ("kimi-k3" in m or "gpt-5" in m) else requested
+    return 1 if _is_reasoning_model(model) else requested
+
+
+def _reasoning_safe_max_tokens(model, requested=1024, floor=4096):
+    """Reasoning models spend part of their budget on hidden reasoning tokens,
+    so a small ``max_tokens`` (e.g. 1024) silently truncates the visible answer.
+    Ensure reasoning models get at least ``floor`` tokens; leave other providers
+    at the requested value."""
+    if _is_reasoning_model(model):
+        return max(requested, floor)
+    return requested
 
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -249,7 +264,7 @@ Remember: Your credibility depends on providing accurate, well-cited information
                     tools=self.tools,
                     tool_choice="auto",
                     temperature=_reasoning_safe_temperature(self.model, self.config.llm.temperature),
-                    max_tokens=self.config.llm.max_tokens,
+                    max_tokens=_reasoning_safe_max_tokens(self.model, self.config.llm.max_tokens),
                     stream=False  # We handle streaming separately
                 )
                 
@@ -408,7 +423,7 @@ Please answer the question based only on the provided context. Include citations
                     model=self.model,
                     messages=messages,
                     temperature=_reasoning_safe_temperature(self.model, self.config.llm.temperature),
-                    max_tokens=self.config.llm.max_tokens,
+                    max_tokens=_reasoning_safe_max_tokens(self.model, self.config.llm.max_tokens),
                     stream=True
                 )
                 
@@ -423,7 +438,7 @@ Please answer the question based only on the provided context. Include citations
                     model=self.model,
                     messages=messages,
                     temperature=_reasoning_safe_temperature(self.model, self.config.llm.temperature),
-                    max_tokens=self.config.llm.max_tokens,
+                    max_tokens=_reasoning_safe_max_tokens(self.model, self.config.llm.max_tokens),
                     stream=False
                 )
                 return response.choices[0].message.content

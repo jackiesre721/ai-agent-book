@@ -1,6 +1,20 @@
 # Memobase Agent with Kimi K3 for LOCOMO Benchmark
 
-An advanced AI agent implementation featuring sophisticated memory management using the Memobase framework, powered by the Kimi K3 model, and evaluated on the LOCOMO (Long Context and Memory Optimization) benchmark.
+An advanced AI agent implementation featuring sophisticated memory management, powered by the Kimi K3 model, and evaluated on the LOCOMO (Long Context and Memory Optimization) benchmark.
+
+> **Two tracks in this folder — don't confuse them:**
+>
+> 1. **Real Memobase framework demo** (`profile_demo.py`) — uses the actual
+>    open-source Memobase SDK (`pip install memobase`, package `memobase>=0.0.27`)
+>    talking to a **running Memobase server**. This is the canonical
+>    demonstration of Memobase's *Profile* (structured user attributes) +
+>    *Event Memory* (timeline) split described in book chapter 3. **See
+>    [Memobase Profile + Event Demo](#memobase-profile--event-demo-real-sdk).**
+> 2. **Hand-rolled memory agent** (`agent.py` / `main.py`) — a self-contained,
+>    *Memobase-inspired* `MemoryStore` (episodic/semantic/procedural/working
+>    memory, pickle-persisted) that calls Kimi K3 directly. It needs **no
+>    Memobase server** — only a `KIMI_API_KEY`. The `--mode` commands below
+>    (interactive / benchmark / demo / task) all drive this agent.
 
 ## Features
 
@@ -115,6 +129,52 @@ python main.py --mode task --task "Plan a 7-day trip to Japan with a $3000 budge
 - `--api-key KEY` - Override the API key from environment
 - `--no-memory` - Start with empty memory store
 - `--verbose` - Enable detailed logging
+
+## Memobase Profile + Event Demo (real SDK)
+
+`profile_demo.py` uses the **real** open-source Memobase SDK to show its two
+memory structures: a **Profile** (topic → sub-topic → content, e.g.
+`basic_info→城市`, `work→职位`, `interest→游戏偏好`) and **Event Memory** (a
+timeline for "when did we discuss the budget?" style questions). It follows
+Memobase's buffered pipeline: `insert` (write to the user buffer) →
+`flush` (trigger one LLM extraction) → `profile` / `event` / `context` (recall).
+
+### Prerequisites: a running Memobase server + an extraction LLM
+
+Memobase does its memory extraction **server-side**, so the demo needs a
+reachable Memobase service (the client does not call the LLM itself):
+
+- **Self-hosted**: follow [memodb-io/memobase](https://github.com/memodb-io/memobase)
+  (docker compose). Default endpoint `http://localhost:8019`, default token
+  `secret`. The extraction model is configured in the **server's** `.env` /
+  `config.yaml`, not by this client (`--model` is informational only).
+- **Cloud**: get a `project_url` + `api_key` from https://www.memobase.io.
+
+Point the client at the server via `--project-url` / `--api-key` or the
+`MEMOBASE_PROJECT_URL` / `MEMOBASE_API_KEY` environment variables (see
+`env.example`).
+
+### Running it
+
+```bash
+pip install -r requirements.txt          # installs the memobase SDK
+
+# End-to-end demo (built-in sample conversation) against a running server:
+python profile_demo.py
+
+# Offline preview — shows the conversation + pipeline without a server,
+# does not go online and does not fabricate results:
+python profile_demo.py --dry-run
+
+# Individual ops once memories exist:
+python profile_demo.py --op profile      # recall structured user profile
+python profile_demo.py --op event        # recall the event timeline
+python profile_demo.py --op context      # assembled memory context string
+python profile_demo.py --input chat.json --output result.json
+```
+
+If no server is reachable the demo exits with an actionable message (pointing
+to `--dry-run` or a `--project-url`) rather than inventing memory output.
 
 ## Architecture
 

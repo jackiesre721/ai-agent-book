@@ -38,7 +38,7 @@ A sophisticated user memory system featuring separated architecture for conversa
 1. Clone the repository:
 ```bash
 git clone <repository-url>
-cd projects/week2/user-memory
+cd chapter3/user-memory
 ```
 
 2. Install dependencies:
@@ -408,12 +408,13 @@ user-memory/
 
 ## 🔧 Development
 
-### Running Tests
+### Smoke-testing the system
 ```bash
-# Test specific components
-python test_agent.py
-python test_streaming.py
-python test_providers.py
+# Quick end-to-end demo (separated conversation + memory processing)
+python quickstart.py
+
+# Offline memory consolidation/dedup (no API call)
+python -c "from memory_manager import NotesMemoryManager; m=NotesMemoryManager('smoke'); print(m.consolidate_memories())"
 ```
 
 ### Adding New Providers

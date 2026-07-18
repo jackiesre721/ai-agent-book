@@ -58,9 +58,11 @@ def setup_environment():
 
 def run_interactive_mode(agent: AgenticRAG, mode: str = "agentic"):
     """Run interactive query mode"""
+    kb = agent.config.knowledge_base
+    active_top_k = kb.offline_top_k if kb.type == KnowledgeBaseType.OFFLINE else kb.local_top_k
     print(f"\n{'='*60}")
     print(f"Agentic RAG System - {mode.capitalize()} Mode")
-    print(f"Verbose: {'Enabled' if agent.config.agent.verbose else 'Disabled'} | Top-K: {agent.config.knowledge_base.local_top_k}")
+    print(f"Verbose: {'Enabled' if agent.config.agent.verbose else 'Disabled'} | KB: {kb.type.value} | Top-K: {active_top_k}")
     print(f"{'='*60}")
     print("Type 'quit' or 'exit' to stop")
     print("Type 'clear' to clear conversation history")
