@@ -38,7 +38,7 @@ from matplotlib.colors import LinearSegmentedColormap, to_rgba
 from matplotlib.ticker import FuncFormatter
 
 REPO = "bojieli/ai-agent-book"
-START_DATE = "2026-07-13"  # UTC; stars before this date are excluded
+START_DATE = "2026-07-15"  # UTC; stars before this date are excluded
 CACHE = Path(__file__).with_name(".star-history-cache.json")
 
 ACCENT = "#f5a623"  # warm amber, reads well on both light and dark
