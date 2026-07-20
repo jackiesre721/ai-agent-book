@@ -56,6 +56,14 @@ class ReadTool(BaseTool):
     def _read_text(self, file_path: Path, offset: int, limit: int) -> Dict[str, Any]:
         """Read text file"""
         try:
+            # Sniff for binary content first: NUL bytes never appear in text,
+            # and control bytes like \x00-\x05 are valid UTF-8, so a decode
+            # error alone is not a reliable binary signal.
+            with open(file_path, 'rb') as f:
+                sample = f.read(8192)
+            if b'\x00' in sample:
+                return {"error": "File appears to be binary. Cannot read as text."}
+
             with open(file_path, 'r', encoding='utf-8') as f:
                 lines = f.readlines()
             

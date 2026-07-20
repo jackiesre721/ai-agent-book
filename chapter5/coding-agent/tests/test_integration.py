@@ -151,14 +151,14 @@ class TestToolChaining:
         
         # First call
         result1 = tool.execute({"pattern": "test", "path": "."})
-        assert result1.data["_metadata"]["call_number"] == 1
-        assert result1.data["_metadata"]["tool"] == "Grep"
+        assert result1.metadata["call_number"] == 1
+        assert result1.metadata["tool"] == "Grep"
         
         # Second call
         result2 = tool.execute({"pattern": "test2", "path": "."})
-        assert result2.data["_metadata"]["call_number"] == 2
+        assert result2.metadata["call_number"] == 2
         
         # Third call
         result3 = tool.execute({"pattern": "test3", "path": "."})
-        assert result3.data["_metadata"]["call_number"] == 3
+        assert result3.metadata["call_number"] == 3
 

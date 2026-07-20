@@ -48,8 +48,10 @@ class BashTool(BaseTool):
             # Start background process
             bg_id = f"bg_{int(time.time())}_{hashlib.md5(command.encode()).hexdigest()[:8]}"
             session.start()
-            # Launch command in background using nohup
-            bg_command = f"nohup {command} > /tmp/{bg_id}.log 2>&1 & echo $!"
+            # Launch command in background; the subshell grouping ensures the
+            # redirect covers the whole command (incl. && / || chains), so all
+            # output lands in the log file instead of leaking to this session.
+            bg_command = f"( {command} ) > /tmp/{bg_id}.log 2>&1 & echo $!"
             output, exit_code = session.execute(bg_command, timeout=5)
             
             return {

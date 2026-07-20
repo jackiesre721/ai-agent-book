@@ -209,8 +209,10 @@ class TestGrepTool:
             "path": str(sample_files["temp_dir"])
         })
         
-        assert not result.success
+        # Tool-level errors are reported in data (success stays True unless
+        # _execute_impl raises) — same convention as all other error tests.
         assert "error" in result.data
+        assert "invalid regex" in result.data["error"].lower()
     
     def test_nonexistent_path(self, system_state):
         """Test searching in nonexistent path"""

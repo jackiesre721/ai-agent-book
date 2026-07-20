@@ -30,7 +30,7 @@ class BashOutputTool(BaseTool):
         log_file = f"/tmp/{bash_id}.log"
         
         if not os.path.exists(log_file):
-            return {"error": f"No output found for bash_id: {bash_id}"}
+            return {"error": f"Bash job not found (no output log) for bash_id: {bash_id}"}
         
         try:
             with open(log_file, 'r') as f:
