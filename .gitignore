@@ -19,3 +19,7 @@ last_run.json
 *.wav
 *.mp3
 *.mp4
+
+# MkDocs build output
+site/
+_web/

@@ -1,0 +1,95 @@
+site_name: 深入理解 AI Agent
+site_description: 深入理解 AI Agent：设计原理与工程实践 — 在线阅读版
+site_url: https://phaethix.github.io/ai-agent-book
+repo_url: https://github.com/phaethix/ai-agent-book
+repo_name: phaethix/ai-agent-book
+edit_uri: edit/main
+
+# The actual docs are assembled into `_web/` by `scripts/build_site.sh`
+# (only the Markdown sources + images are copied; code/PDFs are left out).
+docs_dir: _web
+
+# Strip Pandoc/LaTeX attributes the source Markdown uses (e.g. `{.unnumbered}`,
+# `{#sec:foo}`, image `{height=55%}`) which Python-Markdown cannot parse.
+hooks:
+  - scripts/mkdocs_pandoc_strip.py
+
+theme:
+  name: material
+  language: zh
+  # Custom overrides: injects the language-tab switcher into the header.
+  custom_dir: overrides
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-night
+        name: 切换夜间模式
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/weather-sunny
+        name: 切换日间模式
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.sections
+    - navigation.top
+    - toc.follow
+    - content.code.copy
+    - content.code.annotate
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.details
+
+extra_javascript:
+  - extras/lang-switcher.js
+  - https://unpkg.com/mathjax@3/es5/tex-mml-chtml.js
+
+extra_css:
+  - extras/lang-switcher.css
+
+# Language definitions for the switcher tab bar.
+# Each entry maps its prefix + suffix rules to rewrite URLs across editions.
+extra:
+  languages:
+    zh: { label: 中文, prefix: book/,   default: true }
+    zhtw: { label: 繁體中文, prefix: book-zhtw/, suffix: .zhtw }
+    en: { label: English, prefix: book-en/ }
+    ta: { label: தமிழ், prefix: book-ta/, suffix: .ta }
+    vi: { label: Tiếng Việt, prefix: book-vi/, suffix: .vi }
+
+nav:
+  - 首页: index.md
+  - 引言: book/introduction.md
+  - 第1章 Agent基础知识: book/chapter1.md
+  - 第2章 上下文工程: book/chapter2.md
+  - 第3章 用户记忆和知识库: book/chapter3.md
+  - 第4章 工具: book/chapter4.md
+  - 第5章 CodingAgent与代码生成: book/chapter5.md
+  - 第6章 Agent的评估: book/chapter6.md
+  - 第7章 模型后训练: book/chapter7.md
+  - 第8章 Agent的自我进化: book/chapter8.md
+  - 第9章 多模态与实时交互: book/chapter9.md
+  - 第10章 多Agent协作: book/chapter10.md
+  - 后记: book/afterword.md
+  - 思考题参考答案: book/思考题参考答案.md
