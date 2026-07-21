@@ -27,7 +27,7 @@ trap 'rm -rf "$TMP_DIR"' EXIT
 
 build_edition() {
     local language="$1"
-    local directory title author pdf output
+    local directory title author pdf output title_label toc_label
     local -a chapters
 
     case "$language" in
@@ -37,6 +37,8 @@ build_edition() {
             author="李博杰"
             pdf="深入理解-AI-Agent-李博杰-v1.2.pdf"
             output="深入理解-AI-Agent-李博杰-v1.2.epub"
+            title_label="扉页"
+            toc_label="目录"
             chapters=(introduction.md chapter{1..10}.md afterword.md)
             ;;
         en)
@@ -45,6 +47,8 @@ build_edition() {
             author="Bojie Li; English translation: Devaraj"
             pdf="AI-Agents-in-Depth-Bojie-Li-v1.2.pdf"
             output="AI-Agents-in-Depth-Bojie-Li-v1.2.epub"
+            title_label="Title Page"
+            toc_label="Table of Contents"
             chapters=(introduction.md chapter{1..10}.md afterword.md)
             ;;
         ta)
@@ -53,6 +57,8 @@ build_edition() {
             author="Bojie Li; தமிழ் மொழிபெயர்ப்பு: Devaraj"
             pdf="AI-Agents-in-Depth-Bojie-Li-v1.2-ta.pdf"
             output="AI-Agents-in-Depth-Bojie-Li-v1.2-ta.epub"
+            title_label="தலைப்புப் பக்கம்"
+            toc_label="பொருளடக்கம்"
             chapters=(introduction.ta.md chapter{1..10}.ta.md afterword.ta.md)
             ;;
         vi)
@@ -61,6 +67,8 @@ build_edition() {
             author="Lý Bác Kiệt; bản dịch tiếng Việt: Toàn Nguyễn"
             pdf="AI-Agents-in-Depth-Bojie-Li-v1.2-vi.pdf"
             output="AI-Agents-in-Depth-Bojie-Li-v1.2-vi.epub"
+            title_label="Trang tiêu đề"
+            toc_label="Mục lục"
             chapters=(introduction.vi.md glossary.vi.md chapter{1..10}.vi.md afterword.vi.md)
             ;;
     esac
@@ -99,7 +107,8 @@ build_edition() {
             --metadata identifier="https://github.com/bojieli/ai-agent-book#$language"
     )
 
-    python3 "$ROOT/flatten_epub_toc.py" "$edition_dir/$output"
+    python3 "$ROOT/flatten_epub_toc.py" \
+        "$edition_dir/$output" "$title_label" "$toc_label"
 
     if command -v epubcheck >/dev/null 2>&1; then
         epubcheck "$edition_dir/$output"
