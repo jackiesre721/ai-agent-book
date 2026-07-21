@@ -2,7 +2,7 @@
 
 > 「模型即 Agent」新典範 + **Agent = LLM + 上下文 + 工具**；Harness 工程才是競爭力
 
-← [返回主目錄](../README.md) · 📖 [讀本章正文](../book/chapter1.md)
+← [返回主目錄](../docs/zh-TW/README.md) · 📖 [讀本章正文](../book/chapter1.md)
 
 ## 配套專案
 

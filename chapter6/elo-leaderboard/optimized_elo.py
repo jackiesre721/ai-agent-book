@@ -151,8 +151,12 @@ class NumpyEloRatingSystem:
         
         # Convert outcomes to numeric (1.0 for A wins, 0.0 for B wins, 0.5 for tie)
         print("Converting outcomes to numeric...")
-        outcome_map = {'model_a': 1.0, 'model_b': 0.0, 'tie': 0.5}
-        outcomes = df['winner'].map(outcome_map).values.astype(np.float64)
+        # 'tie (bothbad)' is a real Arena outcome; unmapped values become NaN and
+        # would silently poison every rating they touch, so fall back to a tie
+        # (same as EloRatingSystem.update_ratings).
+        outcome_map = {'model_a': 1.0, 'model_b': 0.0,
+                       'tie': 0.5, 'tie (bothbad)': 0.5}
+        outcomes = df['winner'].map(outcome_map).fillna(0.5).values.astype(np.float64)
         
         return model_a_indices, model_b_indices, outcomes
     

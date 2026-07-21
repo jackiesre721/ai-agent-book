@@ -48,6 +48,7 @@ pandoc "${CHAPTERS[@]}" \
     --number-sections \
     -V documentclass=elegantbook \
     -V classoption=lang=cn \
+    -V classoption=nofont \
     -V classoption=cyan \
     -V classoption=device=normal \
     -V author="李博杰" \

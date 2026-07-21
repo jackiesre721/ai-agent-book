@@ -19,8 +19,8 @@
 
 % ── Unicode glyph fallback (Times/Courier lack these) ─────────────
 \usepackage{newunicodechar}
-\newfontfamily\fallbackfont{Arial Unicode MS}
-\newunicodechar{★}{{\fontspec{Heiti SC}★}}
+\IfFontExistsTF{Arial Unicode MS}{\newfontfamily\fallbackfont{Arial Unicode MS}}{\IfFontExistsTF{Noto Sans CJK SC}{\newfontfamily\fallbackfont{Noto Sans CJK SC}}{\newfontfamily\fallbackfont{DejaVu Sans}}}
+\IfFontExistsTF{Heiti SC}{\newunicodechar{★}{{\fontspec{Heiti SC}★}}}{\IfFontExistsTF{Noto Sans CJK SC}{\newunicodechar{★}{{\fontspec{Noto Sans CJK SC}★}}}{\newunicodechar{★}{{\fontspec{DejaVu Sans}★}}}}
 \newunicodechar{✓}{{\fallbackfont ✓}}
 \newunicodechar{✗}{{\fallbackfont ✗}}
 \newunicodechar{₀}{{\fallbackfont ₀}}
@@ -153,7 +153,7 @@
 % captions were off). Render Heiti SC at nominal size (no MatchLowercase) with a
 % faux bold, so fallback glyphs match the Latin in captions. Injected into captions only;
 % headings and body are untouched.
-\setCJKfamilyfont{capcjksf}[AutoFakeBold=2.5]{Heiti SC}
+\IfFontExistsTF{Heiti SC}{\setCJKfamilyfont{capcjksf}[AutoFakeBold=2.5]{Heiti SC}}{\IfFontExistsTF{Noto Sans CJK SC}{\setCJKfamilyfont{capcjksf}[AutoFakeBold=2.5]{Noto Sans CJK SC}}{\setCJKfamilyfont{capcjksf}[AutoFakeBold=2.5]{DejaVu Sans}}}
 \DeclareCaptionFont{cjkmatch}{\CJKfamily{capcjksf}}
 \captionsetup{font={normalsize,sf,bf,cjkmatch}, labelformat=empty, skip=4pt, justification=centering}
 

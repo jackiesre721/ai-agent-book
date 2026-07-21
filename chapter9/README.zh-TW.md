@@ -2,7 +2,7 @@
 
 > 從文字擴充套件到語音、GUI、物理世界：語音三典範、Computer Use、機器人
 
-← [返回主目錄](../README.md) · 📖 [讀本章正文](../book/chapter9.md)
+← [返回主目錄](../docs/zh-TW/README.md) · 📖 [讀本章正文](../book/chapter9.md)
 
 ## 配套專案
 

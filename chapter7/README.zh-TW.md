@@ -2,7 +2,7 @@
 
 > 預訓練/SFT/RL 三階段：何時選 SFT、何時選 RL，工具呼叫內化、樣本效率
 
-← [返回主目錄](../README.md) · 📖 [讀本章正文](../book/chapter7.md)
+← [返回主目錄](../docs/zh-TW/README.md) · 📖 [讀本章正文](../book/chapter7.md)
 
 ## 配套專案
 

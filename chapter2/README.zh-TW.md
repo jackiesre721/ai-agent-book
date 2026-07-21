@@ -2,7 +2,7 @@
 
 > 上下文決定能力上限：KV Cache、提示工程、Agent Skills、上下文壓縮
 
-← [返回主目錄](../README.md) · 📖 [讀本章正文](../book/chapter2.md)
+← [返回主目錄](../docs/zh-TW/README.md) · 📖 [讀本章正文](../book/chapter2.md)
 
 ## 配套專案
 

@@ -2,7 +2,7 @@
 
 > 跨會話記住使用者、接入外部知識：使用者記憶、RAG、結構化索引、知識圖譜
 
-← [返回主目錄](../README.md) · 📖 [讀本章正文](../book/chapter3.md)
+← [返回主目錄](../docs/zh-TW/README.md) · 📖 [讀本章正文](../book/chapter3.md)
 
 ## 配套專案
 

@@ -31,22 +31,20 @@ jobs:
   build:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Install build tools
         run: |
           brew install pandoc poppler librsvg
-          brew install --cask mactex-no-gui
+          brew install --cask mactex-no-gui font-dejavu font-noto-sans-cjk-sc font-noto-sans-cjk-tc font-noto-serif-tamil
           echo "/Library/TeX/texbin" >> "$GITHUB_PATH"
 
       - name: Build PDFs
         run: |
           set -e
-          for dir in book book-zhtw book-en book-vi; do
+          for dir in book book-zhtw book-en book-vi book-ta; do
             (cd "$dir" && bash build_pdf.sh)
           done
-          # book-ta has no build script (contributed PDF); the repo copy is
-          # uploaded as-is below.
 
       - name: Build EPUBs
         run: ./build_epub.sh all

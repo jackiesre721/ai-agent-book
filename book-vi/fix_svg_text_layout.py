@@ -556,8 +556,8 @@ def main():
     mode.add_argument("--check", action="store_true", help="validate without editing files")
     args = parser.parse_args()
     files = sorted(Path("images").glob("*.svg"))
-    if len(files) != 118:
-        print(f"Expected 118 Vietnamese SVGs, found {len(files)}.", file=sys.stderr)
+    if not files:
+        print("No Vietnamese SVGs found under images/.", file=sys.stderr)
         return 1
     if args.write:
         write_all(files)

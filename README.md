@@ -2,7 +2,7 @@
 
 [![Stars](https://img.shields.io/github/stars/bojieli/ai-agent-book?style=social)](https://github.com/bojieli/ai-agent-book) [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE) [![PDF](https://img.shields.io/badge/PDF-%E4%B8%8B%E8%BD%BD-success.svg)](#-电子书) [![Languages](https://img.shields.io/badge/翻译-5%20种%20语言-informational.svg)](#-电子书)
 
-**中文** ← 当前 · [台灣正體](README.zhtw.md) · [English](README.en.md) · [Tiếng Việt](README.vi.md) · [தமிழ்](README.ta.md)
+**中文** ← 当前 · [台灣正體](docs/zh-TW/README.md) · [English](docs/en/README.md) · [Tiếng Việt](docs/vi/README.md) · [தமிழ்](docs/ta/README.md)
 
 **Agent = LLM + 上下文 + 工具**——本书围绕这个核心公式，用 10 章把 AI Agent 从原理讲到工程实战。全书正文、配图、**88 个配套实验**全部开源，欢迎亲手把实验跑一遍。
 
@@ -55,7 +55,7 @@
 
 > 💡 **读** = 在 GitHub 网页直接读章节正文（markdown）；**N** = 该章配套项目数，点击查看代码。项目类型说明（✅ 可运行 / 📖 复现 / 🚧 设计）见各章 README。
 >
-> 📚 如何高效阅读本书？详见 **[学习建议](docs/LEARNING.md)**（核心理念、学习路径、难度分级、实践建议）。
+> 📚 如何高效阅读本书？详见 **[学习建议](docs/zh-CN/LEARNING.md)**（核心理念、学习路径、难度分级、实践建议）。
 
 ## 🔑 API 密钥
 

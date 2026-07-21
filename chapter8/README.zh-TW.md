@@ -2,7 +2,7 @@
 
 > 不改權重也能成長：經驗學習、從工具使用者到創造者
 
-← [返回主目錄](../README.md) · 📖 [讀本章正文](../book/chapter8.md)
+← [返回主目錄](../docs/zh-TW/README.md) · 📖 [讀本章正文](../book/chapter8.md)
 
 ## 配套專案
 

@@ -3,8 +3,8 @@
 
 % ── Unicode glyph fallback (Times/Courier lack these) ─────────────
 \usepackage{newunicodechar}
-\newfontfamily\fallbackfont{Arial Unicode MS}
-\newunicodechar{★}{{\fontspec{Heiti SC}★}}
+\IfFontExistsTF{Arial Unicode MS}{\newfontfamily\fallbackfont{Arial Unicode MS}}{\IfFontExistsTF{Noto Sans CJK SC}{\newfontfamily\fallbackfont{Noto Sans CJK SC}}{\newfontfamily\fallbackfont{DejaVu Sans}}}
+\IfFontExistsTF{Heiti SC}{\newunicodechar{★}{{\fontspec{Heiti SC}★}}}{\IfFontExistsTF{Noto Sans CJK SC}{\newunicodechar{★}{{\fontspec{Noto Sans CJK SC}★}}}{\newunicodechar{★}{{\fontspec{DejaVu Sans}★}}}}
 \newunicodechar{✓}{{\fallbackfont ✓}}
 \newunicodechar{✗}{{\fallbackfont ✗}}
 \newunicodechar{₀}{{\fallbackfont ₀}}
@@ -137,7 +137,7 @@
 % captions were off). Render Heiti SC at nominal size (no MatchLowercase) with a
 % faux bold, so 中文 matches the Latin in captions. Injected into captions only;
 % headings and body are untouched.
-\setCJKfamilyfont{capcjksf}[AutoFakeBold=2.5]{Heiti SC}
+\IfFontExistsTF{Heiti SC}{\setCJKfamilyfont{capcjksf}[AutoFakeBold=2.5]{Heiti SC}}{\IfFontExistsTF{Noto Sans CJK SC}{\setCJKfamilyfont{capcjksf}[AutoFakeBold=2.5]{Noto Sans CJK SC}}{\setCJKfamilyfont{capcjksf}[AutoFakeBold=2.5]{DejaVu Sans}}}
 \DeclareCaptionFont{cjkmatch}{\CJKfamily{capcjksf}}
 \captionsetup{font={normalsize,sf,bf,cjkmatch}, labelformat=empty, skip=4pt, justification=centering}
 
@@ -156,3 +156,15 @@
 
 % ── Inline code: keep it tight ───────────────────────────────────
 \setlength{\parindent}{2em}
+
+% 正文中文字体：本地 macOS 用 Songti SC / Heiti SC；CI（无 Apple 字体）用 Noto Sans CJK SC。
+% fontset=none 由 build_pdf.sh 传入，避免 ctex 自动选择已被移除的 ST 系列旧字体。
+\IfFontExistsTF{Songti SC}{%
+  \setCJKmainfont[AutoFakeBold=2.5]{Songti SC}%
+  \setCJKsansfont[AutoFakeBold=2.5]{Heiti SC}%
+  \setCJKmonofont[AutoFakeBold=2.5]{Songti SC}%
+}{%
+  \setCJKmainfont[AutoFakeBold=2.5]{Noto Sans CJK SC}%
+  \setCJKsansfont[AutoFakeBold=2.5]{Noto Sans CJK SC}%
+  \setCJKmonofont[AutoFakeBold=2.5]{Noto Sans CJK SC}%
+}
