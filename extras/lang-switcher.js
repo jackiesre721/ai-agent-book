@@ -1,145 +1,135 @@
-// Language switcher: renders tab buttons in the MkDocs Material **header** bar,
-// rewrites the current URL to point at the same page in another edition, and
-// dynamically updates the left sidebar navigation links to match.
+// Language switcher: populates header-bar tab buttons, rewrites URLs across
+// editions, and updates the left sidebar navigation links to follow.
 //
 // URL mapping rules (from mkdocs.yml → extra.languages):
-//   zh: book/chapter1.md       (default, no suffix)
+//   zh: book/chapter1.md        (default, no suffix)
 //   en: book-en/chapter1.md
-//   ta: book-ta/chapter1.ta.md   (.ta suffix before .md)
-//   vi: book-vi/chapter1.vi.md   (.vi suffix before .md)
+//   ta: book-ta/chapter1.ta.md  (.ta suffix before .md)
+//   vi: book-vi/chapter1.vi.md  (.vi suffix before .md)
 
 (function () {
   "use strict";
 
-  const cfg = window.config.extra?.languages;
+  var cfg = window.config.extra && window.config.extra.languages;
   if (!cfg) return;
 
-  // ── helpers ────────────────────────────────────────────────────
+  // ── helpers ───────────────────────────────────────────────
 
-  /** Detect active language code from the current URL path. */
   function detectLang(path) {
-    const p = path.replace(/\/$/, "");
-    for (const [code, lang] of Object.entries(cfg)) {
-      if (p.includes(lang.prefix)) return code;
+    var p = path.replace(/\/$/, "");
+    for (var code in cfg) {
+      if (cfg.hasOwnProperty(code) && p.indexOf(cfg[code].prefix) !== -1)
+        return code;
     }
-    return Object.entries(cfg).find(([, l]) => l.default)?.[0] || "zh";
+    var def = null;
+    for (var c in cfg) {
+      if (cfg.hasOwnProperty(c) && cfg[c].default) { def = c; break; }
+    }
+    return def || "zh";
   }
 
-  /** Map the current URL to the equivalent page in *targetLang*. */
-  function mapUrl(currentPath, targetLang) {
-    if (targetLang === currentLang) return null;
-    const src = cfg[currentLang];
-    const dst = cfg[targetLang];
-
-    let url = currentPath;
-    url = url.replace(src.prefix, dst.prefix);
+  function mapUrl(currentPath, targetCode) {
+    if (targetCode === activeLang) return null;
+    var src = cfg[activeLang];
+    var dst = cfg[targetCode];
+    var url = currentPath.replace(src.prefix, dst.prefix);
     if (src.suffix) url = url.replace(src.suffix + ".md", ".md");
     if (dst.suffix) url = url.replace(/\.md$/, dst.suffix + ".md");
-    return (
-      url ||
-      dst.prefix + "introduction" + (dst.suffix || "") + ".md"
-    );
+    return url || dst.prefix + "introduction" + (dst.suffix || "") + ".md";
   }
 
-  // ── sidebar rewriting ──────────────────────────────────────────
-  // Every sidebar link (<a>) is rewritten so its href points at the
-  // currently-active edition rather than the default (Chinese) one.
+  // ── sidebar rewriting ─────────────────────────────────────
 
   function rewriteSidebar(targetCode) {
-    const target = cfg[targetCode];
-    const defaultLang = Object.entries(cfg).find(([, l]) => l.default)?.[0] || "zh";
+    var target = cfg[targetCode];
+    var defCode = null;
+    for (var c in cfg) { if (cfg.hasOwnProperty(c) && cfg[c].default) { defCode = c; break; } }
+    defCode = defCode || "zh";
+    var defCfg = cfg[defCode];
 
-    document.querySelectorAll(".md-nav__link").forEach((el) => {
-      let href = el.getAttribute("href");
-      if (!href || href.startsWith("http") || href.startsWith("#")) return;
-      // Strip leading slash for consistent processing.
+    var links = document.querySelectorAll(".md-nav__link");
+    for (var i = 0; i < links.length; i++) {
+      var el = links[i];
+      var href = el.getAttribute("href");
+      if (!href || href.indexOf("http") === 0 || href.charAt(0) === "#") continue;
       href = href.replace(/^\//, "");
 
-      // Replace default prefix → target prefix.
-      const defPrefix = cfg[defaultLang].prefix.replace(/\/$/, "");
-      const tgtPrefix = target.prefix.replace(/\/$/, "");
-      if (defPrefix && href.startsWith(defPrefix)) {
+      var defPrefix = (defCfg.prefix || "").replace(/\/$/, "");
+      var tgtPrefix = (target.prefix || "").replace(/\/$/, "");
+
+      if (defPrefix && href.indexOf(defPrefix) === 0) {
         href = tgtPrefix + href.slice(defPrefix.length);
       }
-
-      // Handle suffixes.
-      const defSuffix = cfg[defaultLang].suffix || "";
-      const tgtSuffix = target.suffix || "";
-      if (defSuffix) {
-        href = href.replace(defSuffix + ".html", ".html");
+      var defSuf = defCfg.suffix || "";
+      var tgtSuf = target.suffix || "";
+      if (defSuf) href = href.replace(defSuf + ".html", ".html");
+      if (tgtSuf && href.indexOf(".html") !== -1) {
+        href = href.replace(/\.html$/, tgtSuf + ".html");
       }
-      if (tgtSuffix && href.endsWith(".html")) {
-        href = href.replace(/\.html$/, tgtSuffix + ".html");
-      }
-
       el.setAttribute("href", "/" + href);
-    });
+    }
   }
 
-  // ── render & mount ─────────────────────────────────────────────
+  // ── render ────────────────────────────────────────────────
 
   function render() {
-    const path = location.pathname;
-    const currentLang = detectLang(path);
+    var path = location.pathname;
+    var activeLang = detectLang(path);
+    var container = document.getElementById("lang-tabs-root");
+    if (!container) return;
 
-    // ── inject tab bar into the header (next to search / repo icon) ──
-    const headerInner =
-      document.querySelector(".md-header__inner") ??
-      document.querySelector(".md-header > nav") ??
-      document.querySelector("header.md-header nav");
+    // Skip if already populated.
+    if (container.children.length > 0) return;
 
-    if (!headerInner) return;
-
-    // Avoid double-mounting.
-    if (document.getElementById("lang-tabs-root")) return;
-
-    const root = document.createElement("div");
-    root.id = "lang-tabs-root";
-    root.className = "lang-tabs-wrap";
-    root.setAttribute("role", "tablist");
-    root.setAttribute("aria-label", "Language");
-
-    for (const [code, lang] of Object.entries(cfg)) {
-      const btn = document.createElement("button");
+    var codes = Object.keys(cfg);
+    for (var idx = 0; idx < codes.length; idx++) {
+      var code = codes[idx];
+      var lang = cfg[code];
+      var btn = document.createElement("button");
       btn.className =
-        "lang-tab" + (code === currentLang ? " lang-tab--active" : "");
+        "lang-tab" + (code === activeLang ? " lang-tab--active" : "");
       btn.textContent = lang.label;
-      btn.dataset.lang = code;
+      btn.setAttribute("role", "tab");
+      btn.setAttribute("aria-selected",
+                       String(code === activeLang));
 
-      btn.addEventListener("click", () => {
-        if (code === currentLang) return;
-        const target = mapUrl(path, code);
-        if (target) location.href = target;
-      });
+      (function (tgtCode) {
+        btn.addEventListener("click", function () {
+          if (tgtCode === activeLang) return;
+          var target = mapUrl(path, tgtCode);
+          if (target) location.href = target;
+        });
+      })(code);
 
-      root.appendChild(btn);
+      container.appendChild(btn);
     }
 
-    // Insert before the right-side group (search, repo link, …).
-    const rightGroup =
-      headerInner.querySelector(".md-header__source") ??
-      headerInner.querySelector("[class*='source']") ??
-      Array.from(headerInner.children).pop();
-    headerInner.insertBefore(root, rightGroup);
-
-    // ── rewrite sidebar for non-default languages ──
-    if (currentLang !== (Object.entries(cfg).find(([, l]) => l.default)?.[0] || "zh")) {
-      rewriteSidebar(currentLang);
+    // Rewrite sidebar for non-default languages.
+    var defCode = null;
+    for (var c in cfg) {
+      if (cfg.hasOwnProperty(c) && cfg[c].default) { defCode = c; break; }
+    }
+    if (activeLang !== (defCode || "zh")) {
+      rewriteSidebar(activeLang);
     }
   }
 
-  // MkDocs instant-navigation may not fire DOMContentLoaded again.
-  if (document.readyState === "loading") {
-    document.addEventListener("DOMContentLoaded", render);
-  } else {
-    // Run immediately; also re-run after SPA navigation.
-    render();
+  // ── bootstrap ──────────────────────────────────────────────
+
+  function boot() {
+    if (document.readyState === "loading") {
+      document.addEventListener("DOMContentLoaded", render);
+    } else {
+      render();
+    }
+    // Re-render on SPA instant-navigation.
     document.addEventListener("locationchange", render);
-    // Fallback: watch URL changes for instant-nav.
-    const origPushState = history.pushState;
+    var _pushState = history.pushState;
     history.pushState = function () {
-      origPushState.apply(this, arguments);
-      setTimeout(render, 50);
+      _pushState.apply(this, arguments);
+      setTimeout(render, 60);
     };
   }
+
+  boot();
 })();
