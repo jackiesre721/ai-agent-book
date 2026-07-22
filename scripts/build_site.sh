@@ -13,6 +13,17 @@ mkdir -p "$DEST"
 # Site homepage (root index.md).
 cp "$ROOT/index.md" "$DEST/index.md"
 
+# robots.txt at the site root (for crawlers). Points them at the sitemap
+# that MkDocs auto-generates.
+if [ -f "$ROOT/robots.txt" ]; then
+  cp "$ROOT/robots.txt" "$DEST/robots.txt"
+fi
+
+# Custom 404 page (Material serves 404.html if present).
+if [ -f "$ROOT/404.md" ]; then
+  cp "$ROOT/404.md" "$DEST/404.md"
+fi
+
 # The language editions, each with its images/ subfolder.
 for lang in book book-en book-ta book-vi book-zhtw; do
   mkdir -p "$DEST/$lang"
@@ -50,6 +61,7 @@ find "$DEST" -type f \
   ! -name '*.jpeg' \
   ! -name '*.js' \
   ! -name '*.css' \
+  ! -name '*.txt' \
   -delete
 
 # Drop bulk data files that some experiments bundle as their dataset but

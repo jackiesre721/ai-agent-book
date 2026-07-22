@@ -1,0 +1,5 @@
+User-agent: *
+Allow: /
+
+# Point crawlers at the sitemap that MkDocs generates automatically.
+Sitemap: https://bojieli.github.io/ai-agent-book/sitemap.xml
