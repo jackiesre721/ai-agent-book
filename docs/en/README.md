@@ -4,9 +4,9 @@
 
 **[中文](../../README.md) · [中文繁體](../zh-TW/README.md) · English ← current · [Русский](../ru/README.md) · [Tiếng Việt](../vi/README.md) · [தமிழ்](../ta/README.md)**
 
-**Agent = LLM + Context + Tools** — This book builds on this core formula across 10 chapters, taking AI Agents from principles to engineering practice. The full text, illustrations, and **88 accompanying experiments** are all open source. You are welcome to run the experiments yourself.
+**Agent = LLM + Context + Tools** — This book builds on this core formula across 10 chapters, taking AI Agents from principles to engineering practice. The full text, illustrations, and **92 accompanying experiments** are all open source. You are welcome to run the experiments yourself.
 
-| 📚 **10 chapters** of text, from basics to production | 📂 **88** companion projects (70+ standalone) | 🌐 **6 languages**: CN / zh-TW / EN / RU / TA / VI |
+| 📚 **10 chapters** of text, from basics to production | 📂 **92** companion projects (70+ standalone) | 🌐 **6 languages**: CN / zh-TW / EN / RU / TA / VI |
 | :---: | :---: | :---: |
 
 ## 📖 E-Book
@@ -48,11 +48,11 @@ The book revolves around the core formula **Agent = LLM + Context + Tools**, wit
 | 3 | 📚 **User Memory & Knowledge Bases** | Cross-session user memory + external knowledge: user memory, RAG, structured indexes, knowledge graphs | [Read](../../book-en/chapter3.md) | [13](../../chapter3/README.en.md) |
 | 4 | 🛠️ **Tools** | Tools are the Agent's hands: MCP protocol, perception/execution/collaboration tools, event-driven async Agents, proactive tool discovery | [Read](../../book-en/chapter4.md) | [7](../../chapter4/README.en.md) |
 | 5 | 💻 **Coding Agent & Code Generation** | Code is a "tool that creates new tools"; production-grade Coding Agent in full | [Read](../../book-en/chapter5.md) | [12](../../chapter5/README.en.md) |
-| 6 | 🎯 **Agent Evaluation** | Turn performance into comparable signals: environments, metrics, statistical significance, evaluation-driven selection | [Read](../../book-en/chapter6.md) | [10](../../chapter6/README.en.md) |
-| 7 | 🧠 **Model Post-Training** | Pre-training/SFT/RL three stages: when to choose SFT vs. RL, internalizing tool calls, sample efficiency | [Read](../../book-en/chapter7.md) | [14](../../chapter7/README.en.md) |
+| 6 | 🎯 **Agent Evaluation** | Turn performance into comparable signals: environments, metrics, statistical significance, evaluation-driven selection | [Read](../../book-en/chapter6.md) | [11](../../chapter6/README.en.md) |
+| 7 | 🧠 **Model Post-Training** | Pre-training/SFT/RL three stages: when to choose SFT vs. RL, internalizing tool calls, sample efficiency | [Read](../../book-en/chapter7.md) | [16](../../chapter7/README.en.md) |
 | 8 | 🔄 **Agent Self-Evolution** | Growth without changing weights: learning from experience, from tool user to tool creator | [Read](../../book-en/chapter8.md) | [6](../../chapter8/README.en.md) |
 | 9 | 🎙️ **Multimodal & Real-Time Interaction** | Extending from text to voice, GUI, physical world: three voice paradigms, Computer Use, robotics | [Read](../../book-en/chapter9.md) | [7](../../chapter9/README.en.md) |
-| 10 | 🤝 **Multi-Agent Collaboration** | Collective intelligence > individual: collaboration frameworks, context sharing/isolation, emergent "Agent Society" | [Read](../../book-en/chapter10.md) | [6](../../chapter10/README.en.md) |
+| 10 | 🤝 **Multi-Agent Collaboration** | Collective intelligence > individual: collaboration frameworks, context sharing/isolation, emergent "Agent Society" | [Read](../../book-en/chapter10.md) | [7](../../chapter10/README.en.md) |
 
 > 💡 **Read** = read the chapter text on GitHub (markdown); **N** = number of companion projects, click for code. Project types (✅ Standalone / 📖 Reproduction / 🚧 Design) are explained in each chapter's README.
 >
